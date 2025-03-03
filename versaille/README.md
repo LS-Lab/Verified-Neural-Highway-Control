@@ -1,6 +1,6 @@
 # Analysis of VerSAILLE results
 
-The results of NN verification are stored in `../results/`.  
+The results of NN verification are stored in `./results/`.  
 In particular, you can also find the logs there.
 
 To reproduce the analysis first run the following bash command:
@@ -9,7 +9,7 @@ To reproduce the analysis first run the following bash command:
 ./setup.sh
 ```
 
-Subsequently you should be able to run the Jupyter Notebooks in the `analysis` directory:
+Subsequently you should be able to run the Jupyter Notebooks in the `./analysis` directory:
 - `2-Cars-Simple.ipynb`: Analysis of `./results/` for first NN and 2 cars
 - `Improved-Full.ipynb`: Analysis of `./results` for second NN and 2-5 cars
 - `Simulate.ipynb`: Trajectory simulation for car crash
