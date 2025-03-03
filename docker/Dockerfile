@@ -86,7 +86,7 @@ WORKDIR /home/dockeruser/
 COPY *.kyx /proofs
 COPY run_benchmark.sh /home/dockeruser/run_benchmark.sh
 
-COPY keymaerax.tar /home/dockeruser/
+RUN wget https://github.com/LS-Lab/Verified-Neural-Highway-Control/releases/download/0.9/keymaerax.tar
 RUN tar -xzvf keymaerax.tar
 
 # Custom Data NCubeV
