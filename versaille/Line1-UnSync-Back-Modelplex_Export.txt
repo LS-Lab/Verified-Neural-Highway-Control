@@ -1,0 +1,172 @@
+x1post >= x2post &
+x1post >= x3post &
+-Bmax() <= afpost &
+afpost <= -Bmin() &
+(
+  xf <= xl |
+  xl <= xf & Amin() <= afpost & afpost <= Amax() |
+  (
+    xf + L() <= xl &
+    (
+      xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+      -Bmin() <= afpost &
+      afpost <= Amax() &
+      vf + afpost * T()  <  0 &
+      xf + vf^2 / (2 * (-afpost)) + L()  <  xl + vl^2 / (2 * Bmax()) |
+      -Bmin() <= afpost &
+      afpost <= Amax() &
+      vf + afpost * T() >= 0 &
+      xf + vf^2 / (2 * Bmin()) +
+      (afpost / Bmin() + 1) * (afpost / 2 * T()^2 + T() * vf) +
+      L()  <
+       xl + vl^2 / (2 * Bmax())
+    ) |
+    xl + L() <= xf &
+    (
+      Amin() <= afpost &
+      afpost <= Amax() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-Amin())) |
+      afpost <= Amin() &
+      vf + afpost * T() > V() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-afpost)) |
+      afpost <= Amin() &
+      vf + afpost * T() <= V() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-Amin())) +
+      (1 - afpost / Amin()) * (afpost / 2 * T()^2 + T() * (vf - V()))
+    )
+  ) &
+  afpost <= Amax()
+) |
+(x1post  <  x2post | x1post  <  x3post) &
+(
+  x2post > x1post &
+  x2post >= x3post &
+  (
+    xf <= xl & -Bmax() <= 0 & 0 <= -Bmin() & afpost = 0 |
+    xl <= xf & Amin() <= 0 & 0 <= Amax() & afpost = 0 |
+    (
+      xf + L() <= xl &
+      (
+        -Bmax() <= 0 &
+        0 <= -Bmin() &
+        xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+        -Bmin() <= 0 &
+        0 <= Amax() & vf  <  0 & xf + vf^2 / 0 + L()  <  xl + vl^2 / (2 * Bmax()) |
+        -Bmin() <= 0 &
+        0 <= Amax() &
+        vf >= 0 &
+        xf + vf^2 / (2 * Bmin()) + (0 / Bmin() + 1) * (T() * vf) + L()  <
+         xl + vl^2 / (2 * Bmax())
+      ) |
+      xl + L() <= xf &
+      (
+        Amin() <= 0 &
+        0 <= Amax() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+         xf + (vf - V())^2 / (2 * (-Amin())) |
+        -Bmax() <= 0 &
+        0 <= Amin() &
+        vf > V() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <  xf + (vf - V())^2 / 0 |
+        -Bmax() <= 0 &
+        0 <= Amin() &
+        vf <= V() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+         xf + (vf - V())^2 / (2 * (-Amin())) +
+        (1 - 0 / Amin()) * (T() * (vf - V()))
+      )
+    ) &
+    -Bmax() <= 0 & 0 <= Amax() & afpost = 0
+  ) |
+  (x2post <= x1post | x2post  <  x3post) &
+  (
+    x3post > x1post &
+    x3post > x2post &
+    Amin() <= afpost &
+    afpost <= Amax() &
+    (
+      xf <= xl & -Bmax() <= afpost & afpost <= -Bmin() |
+      xl <= xf |
+      (
+        xf + L() <= xl &
+        (
+          -Bmax() <= afpost &
+          afpost <= -Bmin() &
+          xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= afpost &
+          vf + afpost * T()  <  0 &
+          xf + vf^2 / (2 * (-afpost)) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= afpost &
+          vf + afpost * T() >= 0 &
+          xf + vf^2 / (2 * Bmin()) +
+          (afpost / Bmin() + 1) * (afpost / 2 * T()^2 + T() * vf) +
+          L()  <
+           xl + vl^2 / (2 * Bmax())
+        ) |
+        xl + L() <= xf &
+        (
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) |
+          -Bmax() <= afpost &
+          afpost <= Amin() &
+          vf + afpost * T() > V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-afpost)) |
+          -Bmax() <= afpost &
+          afpost <= Amin() &
+          vf + afpost * T() <= V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) +
+          (1 - afpost / Amin()) * (afpost / 2 * T()^2 + T() * (vf - V()))
+        )
+      ) &
+      -Bmax() <= afpost
+    ) |
+    (x3post <= x1post | x3post <= x2post) &
+    (
+      xf <= xl & -Bmax() <= af & af <= -Bmin() & afpost = af |
+      xl <= xf & Amin() <= af & af <= Amax() & afpost = af |
+      (
+        xf + L() <= xl &
+        (
+          -Bmax() <= af &
+          af <= -Bmin() &
+          xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= af &
+          af <= Amax() &
+          vf + af * T()  <  0 &
+          xf + vf^2 / (2 * (-af)) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= af &
+          af <= Amax() &
+          vf + af * T() >= 0 &
+          xf + vf^2 / (2 * Bmin()) +
+          (af / Bmin() + 1) * (af / 2 * T()^2 + T() * vf) +
+          L()  <
+           xl + vl^2 / (2 * Bmax())
+        ) |
+        xl + L() <= xf &
+        (
+          Amin() <= af &
+          af <= Amax() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) |
+          -Bmax() <= af &
+          af <= Amin() &
+          vf + af * T() > V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-af)) |
+          -Bmax() <= af &
+          af <= Amin() &
+          vf + af * T() <= V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) +
+          (1 - af / Amin()) * (af / 2 * T()^2 + T() * (vf - V()))
+        )
+      ) &
+      -Bmax() <= af & af <= Amax() & afpost = af
+    )
+  )
+)

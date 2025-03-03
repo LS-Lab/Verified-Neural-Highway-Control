@@ -1,0 +1,46 @@
+/home/samuel/anaconda3/envs/abz/lib/python3.10/site-packages/gymnasium/utils/passive_env_checker.py:42: UserWarning: [33mWARN: A Box observation space has an unconventional shape (neither an image, nor a 1D vector). We recommend flattening the observation to have only a 1D vector or use a custom policy to properly process the data. Actual observation shape: (5, 5)[0m
+  logger.warn(
+/home/samuel/anaconda3/envs/abz/lib/python3.10/site-packages/gymnasium/utils/passive_env_checker.py:42: UserWarning: [33mWARN: A Box observation space has an unconventional shape (neither an image, nor a 1D vector). We recommend flattening the observation to have only a 1D vector or use a custom policy to properly process the data. Actual observation shape: (5, 5)[0m
+  logger.warn(
+/home/samuel/anaconda3/envs/abz/lib/python3.10/site-packages/gymnasium/utils/passive_env_checker.py:42: UserWarning: [33mWARN: A Box observation space has an unconventional shape (neither an image, nor a 1D vector). We recommend flattening the observation to have only a 1D vector or use a custom policy to properly process the data. Actual observation shape: (5, 5)[0m
+  logger.warn(
+------------------------------
+Environment:  0
+Policy:  classic_action
+Resolution:  15
+Results: 
+Start inside invariant:  1000 / 1000
+Crashes:  0 / 1000
+Crashes inside invariant:  0 / 1000
+Average reward):  16.08357166666658 +- 0.07075134243589638
+Action distribution:  [24186, 4799, 1015]
+------------------------------
+Environment:  0
+Policy:  veriphy_action
+Resolution:  15
+Results: 
+Start inside invariant:  1000 / 1000
+Crashes:  0 / 1000
+Crashes inside invariant:  0 / 1000
+Average reward):  16.08357166666658 +- 0.07075134243589638
+Action distribution:  [24186, 4799, 1015]
+------------------------------
+Environment:  0
+Policy:  jsc_action
+Resolution:  15
+Results: 
+Start inside invariant:  1000 / 1000
+Crashes:  0 / 1000
+Crashes inside invariant:  0 / 1000
+Average reward):  16.08357166666658 +- 0.07075134243589638
+Action distribution:  [24186, 4799, 1015]
+------------------------------
+Environment:  0
+Policy:  jsc_action
+Resolution:  100
+Results: 
+Start inside invariant:  1000 / 1000
+Crashes:  0 / 1000
+Crashes inside invariant:  0 / 1000
+Average reward):  16.08542818124978 +- 0.07170728426592052
+Action distribution:  [24165, 4835, 1000]

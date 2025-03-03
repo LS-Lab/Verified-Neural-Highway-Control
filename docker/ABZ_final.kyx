@@ -1,0 +1,504 @@
+Definitions
+/*Max acceleration range*/
+Real Amax;
+Real Amin;
+/*Max braking range*/
+Real Bmax;
+Real Bmin;
+/*Reaction time controlled*/
+Real T;
+/*Car length*/
+Real L;
+/*Speed Limit*/
+Real V;
+
+/**Helper functions**/
+/*Constant assumptions*/
+Bool ctxtConst <-> Amax >= Amin & Amin > 0
+    & Bmax >= Bmin & Bmin > 0
+    & T > 0
+    & L > 0
+    & V > 0;
+/*General model invariant*/
+Bool E(Real vf, Real vl) <-> vf >= 0 & vl >= 0 & vf <= V & vl <= V;
+Bool ctxt(Real vf, Real vl, Real af, Real al) <-> ctxtConst & E(vf,vl) & range(af,-Bmax, Amax) & range(al,-Bmax, Amax);
+/*Acceleration range*/
+Bool range(Real a, Real aLow, Real aHigh) <-> aLow <= a & a <= aHigh;
+/*Braking distance*/
+Real dist(Real x, Real v, Real b) = x + v^2/(2*b);
+
+/**Controllers**/
+/*Fallback control*/
+HP fallback ::= {?xf<=xl;af:=*;?range(af,-Bmax,-Bmin); ++ ?xl<=xf;af:=*;?range(af,Amin,Amax);};
+
+/*Unrestricted car controls "ctrl*_u"*/
+HP ctrlU ::= {al:=*;?range(al,-Bmax,Amax);};
+
+/*Controller conditions*/
+Bool safeBackT(Real xf, Real vf, Real af, Real xl, Real vl, Real t) <-> xf + L <= xl & (
+    range(af,-Bmax,-Bmin) & dist(xf,vf,Bmin) + L < dist(xl, vl, Bmax) /*Hard brake: is equivalent to the fallback */
+  | range(af,-Bmin,Amax) & vf + af*t < 0 & dist(xf,vf,-af) + L < dist(xl,vl,Bmax) /*Soft brake at low speed: stops before next control cycle*/
+  | range(af,-Bmin,Amax) & vf + af*t >= 0 & dist(xf,vf,Bmin) + (af/Bmin + 1)*(af/2*t^2 + t*vf) + L < dist(xl,vl,Bmax) /*General case*/
+);
+
+Bool safeT(Real xf, Real vf, Real af, Real xl, Real vl) <-> safeBackT(xf,vf,af,xl,vl,T) | safeFrontT(xf,vf,af,xl,vl,T);
+
+Bool safeFrontT(Real xf, Real vf, Real af, Real xl, Real vl, Real t) <-> xl + L <= xf & (
+  range(af,Amin,Amax) & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-Amin)) /*Hard acceleration: is equivalent to the fallback*/
+| range(af,-Bmax,Amin) & vf + af*t > V & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-af)) /* Reach max speed before next control cycle*/
+| range(af,-Bmax,Amin) & vf + af*t <= V & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-Amin) + (-af/Amin + 1)*(af/2*t^2 + t*(vf-V))) /*General case*/
+);
+
+HP ctrlT ::= {af:=*;?range(af,-Bmax,Amax);{fallback; ++ ?safeT(xf,vf,af,xl,vl);}t0:=t;};
+
+/**Dynamics**/
+HP plantT ::= {if ((vl = 0 & al < 0) | (vl = V & al > 0)) {al:=0;}; if ((vf = 0 & af < 0)|(vf = V & af > 0)) {af:=0;};{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1 & E(vf,vl) & t<=t0+T}};
+
+
+/*Safe zone behind*/
+Bool Hback(Real xf, Real vf, Real xl, Real vl) <-> xf + L <= xl & dist(xf,vf,Bmin) + L < dist(xl, vl, Bmax);
+
+/*Safe zone in front*/
+Bool Hfront(Real xf, Real vf, Real xl, Real vl) <-> xl + L <= xf & dist(xl,(vl-V),-Amax) + L < dist(xf,(vf-V),-Amin);
+
+/*Loop invariant*/
+Bool invBack(Real xf, Real vf, Real af, Real xl, Real vl, Real al, Real t, Real t0) <-> range(t, t0, t0+T)
+    & range(al,-Bmax,Amax)
+    & E(vf,vl)
+    & safeBackT(xf,vf,af,xl,vl,t0+T-t);
+
+Bool invFront(Real xf, Real vf, Real af, Real xl, Real vl, Real al, Real t, Real t0) <-> range(t, t0, t0+T)
+    & range(al,-Bmax,Amax)
+    & E(vf,vl)
+    & safeFrontT(xf,vf,af,xl,vl,t0+T-t);
+
+End.
+
+/**Proofs of dynamics invariants**/
+/*Back*/
+Lemma "ABZ/safeBackT invariant"
+
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+End.
+
+Problem
+  ctxtConst & range(al,-Bmax,Amax) & safeBackT(xf,vf,af,xl,vl,t0+T-t) -> [{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1 & E(vf,vl) & t<=t0+T}]safeBackT(xf,vf,af,xl,vl,t0+T-t)
+End.
+Tactic "Proof"
+expand("safeBackT");
+unfold;
+/*Split in the 3 cases of safeBackT*/
+orL('Llast); <(
+  "range(af,-Bmax(),-Bmin())&dist(xf,vf,Bmin())+L() < dist(xl,vl,Bmax())":
+    useAt("PC9", "1", 'R~="[a;](p()&#(q()|r())#)");
+    /*Case 1 - Hard brake: is equivalent to the fallback */
+    dR("xf+L()<=xl&dist(xf,vf,Bmin())+L() < dist(xl,vl,Bmax())", 1) ; <(
+    dW(1) ; propClose,
+    /*Introduce ghost controller car braking at exactly -Bmin*/
+    dG("vfB'=-Bmin()", 1); existsR("vf", 1); diffInvariant("vf<=vfB", 1); allR2L('Llast);
+    dG("xfB'=vfB", 1); existsR("xf", 1); diffInvariant("xf<=xfB", 1); allR2L('Llast);
+    /*Update postcondition w.r.t ghost car*/
+    dC("xfB + L <= xl & dist(xfB,vfB,Bmin) + L < dist(xl, vl, Bmax)", 1); <(
+      "Use":
+        dW(1); QE,
+      "Show":
+        skip
+    );
+    /*Update domain w.r.t ghost car*/
+    diffInvariant("vfB<=V()", 1);
+    dR("(vfB>=0&vl>=0&vfB<=V()&vl<=V())&t<=t0+T()", 1) ; <(
+      dGi(1)*2,
+      dW(1) ; QE
+    );
+    /*Prove that the ghost car stays in mode "safely behind"*/
+    auto
+  ),
+  "range(af,-Bmin(),Amax())&vf+af*(t0+T()-t) < 0&dist(xf,vf,-af)+L() < dist(xl,vl,Bmax())|range(af,-Bmin(),Amax())&vf+af*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af/Bmin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax())":
+    useAt("PC10", "1", 'R~="[a;](p()&#(q()|r())#)");
+    orL('Llast); <(
+      "range(af,-Bmin(),Amax())&vf+af*(t0+T()-t) < 0&dist(xf,vf,-af)+L() < dist(xl,vl,Bmax())":
+        useAt("PC9", "1", 'R~="[a;](p()&#(q()|r())#)");
+        /*Case 2 - Soft brake at low speed: stops before next control cycle*/
+        diffInvariant("range(af,-Bmin(),Amax())&vf+af*(t0+T()-t) < 0&dist(xf,vf,-af)+L() < dist(xl,vl,Bmax())", 1);
+        ODE(1),
+      "range(af,-Bmin(),Amax())&vf+af*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af/Bmin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax())":
+        useAt("PC10", "1", 'R~="[a;](p()&#(q()|r())#)");
+        /*Case 3 - General case*/
+        diffInvariant("range(af,-Bmin(),Amax())&vf+af*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af/Bmin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax())", 1);
+        /*Split main safety condition (relative position of the cars) and the others invariants*/
+        boxAnd(1) ; andR(1); <(
+          "[{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&((vf>=0&vl>=0&vf<=V()&vl<=V())&t<=t0+T())&(-Bmin()<=af&af<=Amax())&vf+af*(t0+T()-t)>=0&xf+vf^2/(2*Bmin())+(af/Bmin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < xl+vl^2/(2*Bmax())}]xf+L()<=xl":
+            /*Prove that the car stays behind*/
+            dR("dist(xf,vf,Bmin())+L() < dist(xl,vl,Bmax())&E(vf,vl)&t<=t0+T()", 1) ; <(
+              auto,
+              dW(1) ; QE
+            ),
+          "[{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&((vf>=0&vl>=0&vf<=V()&vl<=V())&t<=t0+T())&(-Bmin()<=af&af<=Amax())&vf+af*(t0+T()-t)>=0&xf+vf^2/(2*Bmin())+(af/Bmin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < xl+vl^2/(2*Bmax())}]((-Bmin()<=af&af<=Amax())&vf+af*(t0+T()-t)>=0&xf+vf^2/(2*Bmin())+(af/Bmin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < xl+vl^2/(2*Bmax()))":
+            /*Prove the other invariants*/
+            dW(1) ; propClose
+        )
+    )
+)
+End.
+End.
+
+/*Front*/
+Lemma "ABZ/safeFrontT invariant"
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+End.
+
+Problem
+  ctxtConst & range(al,-Bmax,Amax) & safeFrontT(xf,vf,af,xl,vl,t0+T-t) -> [{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1 & E(vf,vl) & t<=t0+T}]safeFrontT(xf,vf,af,xl,vl,t0+T-t)
+End.
+Tactic "New proof"
+unfold;
+expandAllDefs();
+dG("vfB'=af", 1) ; existsR("vf-V()", 1) ; diffInvariant("vfB=vf-V()", 1) ; allR2L('Llast);
+dG("vlB'=al", 1) ; existsR("vl-V()", 1) ; diffInvariant("vlB=vl-V()", 1) ; allR2L('Llast);
+dG("xfB'=vfB", 1) ; existsR("xf-V()*t", 1) ; diffInvariant("xfB=xf-V()*t", 1);
+dG("xlB'=vlB", 1) ; existsR("xl-V()*t", 1) ; diffInvariant("xlB=xl-V()*t", 1);
+dC("xlB+L()<=xfB&((Amin()<=af&af<=Amax())&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB))", 'R=="[{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1,vfB'=af,vlB'=al,xfB'=vfB,xlB'=vlB&(((((vf>=0&vl>=0&vf<=V()&vl<=V())&t<=t0+T())&vfB=vf-V())&vlB=vl-V())&xfB=xf-V()*t)&xlB=xl-V()*t}](xl+L()<=xf&((Amin()<=af&af<=Amax())&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(vf-V())^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)>V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(vf-V())^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)<=V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(vf-V())^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*(vf-V()))))"); <(
+  "Use":
+    dW('R=="[{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1,vfB'=af,vlB'=al,xfB'=vfB,xlB'=vlB&((((((vf>=0&vl>=0&vf<=V()&vl<=V())&t<=t0+T())&vfB=vf-V())&vlB=vl-V())&xfB=xf-V()*t)&xlB=xl-V()*t)&xlB+L()<=xfB&((Amin()<=af&af<=Amax())&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB))}](xl+L()<=xf&((Amin()<=af&af<=Amax())&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(vf-V())^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)>V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(vf-V())^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)<=V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(vf-V())^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*(vf-V()))))");
+    unfold;
+    allR2L(-8) ; allR2L(-10) ; allL2R(-6) ; allL2R(-2);
+    QE using "Amax()>=Amin() :: xlB=xl-V()*t :: xl-V()*t+L()<=xf-V()*t :: (Amin()<=af&af<=Amax())&xl-V()*t+vlB^2/(2*(-Amax()))+L() < xf-V()*t+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xl-V()*t+vlB^2/(2*(-Amax()))+L() < xf-V()*t+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xl-V()*t+vlB^2/(2*(-Amax()))+L() < xf-V()*t+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB) :: Amin()>0 :: xfB=xf-V()*t :: vfB=vf-V() :: T()>0 :: t<=t0+T() :: vf>=0 :: V()>0 :: vf<=V() :: xl+L()<=xf&((Amin()<=af&af<=Amax())&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)>V()&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)<=V()&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)) :: nil",
+  "Show":
+    cut("xlB+L()<=xfB&((Amin()<=af&af<=Amax())&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB))"); <(
+      "Use":
+        hideL('L=="xl+L()<=xf&((Amin()<=af&af<=Amax())&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)>V()&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)<=V()&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB))");
+        dR("(vfB<=0&vlB<=0&vfB>=-V()&vlB>=-V())&t<=t0+T()", 1) ; <(
+          dGi(1)*4,
+          dW(1) ; QE
+        );
+        unfold;
+        orL('L=="(Amin()<=af&af<=Amax())&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)"); <(
+          "(Amin()<=af&af<=Amax())&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))":
+            useAt("PC9", "1", 'R~="[a;](p()&#(q()|r())#)") ; dR("xlB+L()<=xfB&dist(xlB,vlB,-Amax())+L() < dist(xfB,vfB,-Amin())", 1) ; <(
+              dW(1) ; expandAllDefs() ; propClose,
+              skip
+            );
+            dG("vf'=Amin()", 1) ; existsR("vfB", 1) ; diffInvariant("vf<=vfB", 1) ; allR2L('Llast) ; dG("xf'=vf", 1) ; existsR("xfB", 1) ; diffInvariant("xf<=xfB", 1) ; allR2L('Llast);
+            unfold;
+            dC("xlB+L()<=xf&dist(xlB,vlB,-Amax())+L() < dist(xf,vf,-Amin())", 1) ; <(
+              "Use": dW(1) ; expand("dist") ; QE,
+              "Show": skip
+            ) ; diffInvariant("-V()<=vf", 1) ; dR("(vf<=0&vlB<=0&vf>=-V()&vlB>=-V())&t<=t0+T()", 1) ; <(
+              commaCommute(1)*3 ; dGi(1) ; commaCommute(1)*4 ; dGi(1),
+              dW(1) ; QE
+            );
+            diffInvariant("xlB+vlB^2/(2*(-Amax()))+L() < xf+vf^2/(2*(-Amin()))", 'R=="[{vlB'=al,xlB'=vlB,vf'=Amin(),xf'=vf,t'=1&(vf<=0&vlB<=0&vf>=-V()&vlB>=-V())&t<=t0+T()}](xlB+L()<=xf&xlB+vlB^2/(2*(-Amax()))+L() < xf+vf^2/(2*(-Amin())))");
+            auto,
+          "(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)":
+            useAt("PC10", "1", 'R~="[a;](p()&#(q()|r())#)");
+            orL('L=="(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)"); <(
+              "(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))":
+                useAt("PC9", "1", 'R~="[a;](p()&#(q()|r())#)");
+                diffInvariant("range(af,-Bmax(),Amin())&vfB+af*(t0+T()-t)>0&dist(xlB,vlB,-Amax())+L() < dist(xfB,vfB,-af)", 1) ; ODE(1),
+              "(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)":
+                useAt("PC10", "1", 'R~="[a;](p()&#(q()|r())#)");
+                diffInvariant("range(af,-Bmax(),Amin())&vfB+af*(t0+T()-t)<=0&dist(xlB,vlB,-Amax())+L() < dist(xfB,vfB,-Amin())+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)", 1) ; boxAnd(1) ; andR(1); <(
+                  "[{t'=1,vfB'=af,vlB'=al,xfB'=vfB,xlB'=vlB&((vfB<=0&vlB<=0&vfB>=-V()&vlB>=-V())&t<=t0+T())&(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)}]xlB+L()<=xfB":
+                    dR("dist(xlB,vlB,-Amax())+L() < dist(xfB,vfB,-Amin())&(vfB<=0&vlB<=0&vfB>=-V()&vlB>=-V())&t<=t0+T()", 1) ; <(
+            auto,
+            dW(1) ; QE
+          ),
+                  "[{t'=1,vfB'=af,vlB'=al,xfB'=vfB,xlB'=vlB&((vfB<=0&vlB<=0&vfB>=-V()&vlB>=-V())&t<=t0+T())&(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)}]((-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB))":
+                    dW(1) ; propClose
+                )
+            )
+        ),
+      "Show":
+        diffUnpackEvolDomain('R=="[{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1,vfB'=af,vlB'=al,xfB'=vfB,xlB'=vlB&(((((vf>=0&vl>=0&vf<=V()&vl<=V())&t<=t0+T())&vfB=vf-V())&vlB=vl-V())&xfB=xf-V()*t)&xlB=xl-V()*t}](xlB+L()<=xfB&((Amin()<=af&af<=Amax())&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)))");
+        hideR('R=="[{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1,vfB'=af,vlB'=al,xfB'=vfB,xlB'=vlB&(((((vf>=0&vl>=0&vf<=V()&vl<=V())&t<=t0+T())&vfB=vf-V())&vlB=vl-V())&xfB=xf-V()*t)&xlB=xl-V()*t}](xlB+L()<=xfB&((Amin()<=af&af<=Amax())&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xlB+vlB^2/(2*(-Amax()))+L() < xfB+vfB^2/(2*(-Amin()))+(-af/Amin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)))");
+        unfold;
+        allL2R(-3) ; allL2R(-4);
+        fullSimplify;
+        QE using "vfB=vf-V() :: Amax()>=Amin() :: xl+L()<=xf :: (Amin()<=af&af<=Amax())&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)>V()&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vf+af*(t0+T()-t)<=V()&xl+vlB^2/(2*(-Amax()))+L() < xf+vfB^2/(2*(-Amin()))+(1-af/Amin())*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB) :: Amin()>0 :: T()>0 :: t<=t0+T() :: V()>0 :: vf>=0 :: vf<=V() :: xl-V()*t+L()<=xf-V()*t&((Amin()<=af&af<=Amax())&xl-V()*t+vlB^2/(2*(-Amax()))+L() < xf-V()*t+vfB^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)>0&xl-V()*t+vlB^2/(2*(-Amax()))+L() < xf-V()*t+vfB^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&vfB+af*(t0+T()-t)<=0&xl-V()*t+vlB^2/(2*(-Amax()))+L() < xf-V()*t+vfB^2/(2*(-Amin()))+(1-af/Amin())*(af/2*(t0+T()-t)^2+(t0+T()-t)*vfB)) :: nil"
+    )
+)
+End.
+End.
+
+/**Main safety proof**/
+/*Back*/
+Lemma "ABZ/Safety - Back"
+
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+End.
+
+Problem
+    ctxt(vf,vl,af,al) & Hback(xf,vf,xl,vl) & t0 = t-T -> [{ctrlU;{ctrlT;++?(t < t0 + T);};plantT;}*@invariant(invBack(xf,vf,af,xl,vl,al,t,t0))]xf + L <= xl
+End.
+Tactic "Proof"
+unfold;
+loop("invBack(xf,vf,af,xl,vl,al,t,t0)", 'Rlast); <(
+  "Init":
+    expandAllDefs() ; unfold ; fullSimplify ; QE,
+  "Post":
+    expandAllDefs() ; propClose,
+  "Step":
+    /*Induction step*/
+    expand("invBack");
+    unfold;
+    expand("ctrlU");
+    /*Loop invariant holds after ctrlU*/
+    MR("range(al,-Bmax(),Amax())", 'Rlast); <(
+      unfold,
+      composeb('Rlast);
+      expand("ctrlT");
+      expand("fallback");
+      /*Loop invariant holds after ctrlT (even if skipped)*/
+      MR("invBack(xf,vf,af,xl,vl,al,t,t0)", 'Rlast); <(
+        unfold; <(
+          "[?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());][t0:=t;]invBack(xf,vf,af,xl,vl,al,t,t0)":
+            /*Case fallback*/
+            expand("invBack");
+            andR(1); <(
+              "range(t,t,t+T())":
+                expand("range");
+                QE using "T()>0 :: t<=t&t<=t+T() :: nil",
+              "range(al,-Bmax(),Amax())&E(vf,vl)&safeBackT(xf,vf,af,xl,vl,t+T()-t)":
+                expand("safeBackT");
+                useAt("PC9", "1", 'R~="p1()&p2()&p3()&#(q1()|q2())#");
+                unfold;
+                orL('L=="range(af_0,-Bmax(),-Bmin())&dist(xf,vf,Bmin())+L() < dist(xl,vl,Bmax())|range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t) < 0&dist(xf,vf,-af_0)+L() < dist(xl,vl,Bmax())|range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af_0/Bmin()+1)*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax())"); <(
+                  "range(af_0,-Bmax(),-Bmin())&dist(xf,vf,Bmin())+L() < dist(xl,vl,Bmax())":
+                    propClose,
+                  "range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t) < 0&dist(xf,vf,-af_0)+L() < dist(xl,vl,Bmax())|range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af_0/Bmin()+1)*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax())":
+                    orL('L=="range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t) < 0&dist(xf,vf,-af_0)+L() < dist(xl,vl,Bmax())|range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af_0/Bmin()+1)*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax())"); <(
+                      "range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t) < 0&dist(xf,vf,-af_0)+L() < dist(xl,vl,Bmax())":
+                        expandAllDefs();
+                        unfold;
+                        QE using "Bmax()>=Bmin() :: Bmin()>0 :: t<=t0+T() :: vf>=0 :: -Bmin()<=af_0 :: vf+af_0*(t0+T()-t) < 0 :: xf+vf^2/(2*(-af_0))+L() < xl+vl^2/(2*Bmax()) :: xf+vf^2/(2*Bmin())+L() < xl+vl^2/(2*Bmax()) :: nil",
+                      "range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af_0/Bmin()+1)*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax())":
+                        expand("range");
+                        expand("E");
+                        QE using "Bmin()>0 :: t0<=t&t<=t0+T() :: vf>=0&vl>=0&vf<=V()&vl<=V() :: (-Bmin()<=af_0&af_0<=Amax())&vf+af_0*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af_0/Bmin()+1)*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax()) :: dist(xf,vf,Bmin())+L() < dist(xl,vl,Bmax()) :: nil"
+                    )
+                )
+            ),
+          "[?t < t0+T();]invBack(xf,vf,af,xl,vl,al,t,t0)":
+            /*Case ctrlT skipped*/
+            expand("invBack");
+            propClose,
+          "[?safeT(xf,vf,af,xl,vl);][t0:=t;]invBack(xf,vf,af,xl,vl,al,t,t0)":
+            /*Case guard satisfied*/
+            expand("safeT");
+            expand("invBack");
+            fullSimplify;
+            orL('L=="safeBackT(xf,vf,af,xl,vl,T())|safeFrontT(xf,vf,af,xl,vl,T())"); <(
+              "safeBackT(xf,vf,af,xl,vl,T())":
+                expand("range");
+                QE using "safeBackT(xf,vf,af,xl,vl,T()) :: T()>0 :: (t<=t&t<=t+T())&safeBackT(xf,vf,af,xl,vl,t+T()-t) :: nil",
+              "safeFrontT(xf,vf,af,xl,vl,T())":
+                expand("safeFrontT");
+                expand("safeBackT");
+                andL('L)*;
+                QE using "L()>0 :: xl+L()<=xf :: xf+L()<=xl :: nil"
+            ),
+          "[?xl<=xf;af:=*;?range(af,Amin(),Amax());][t0:=t;]invBack(xf,vf,af,xl,vl,al,t,t0)":
+            /*Case impossible fallback*/
+            expand("safeBackT");
+            andL('L=="xf+L()<=xl&(range(af_0,-Bmax(),-Bmin())&dist(xf,vf,Bmin())+L() < dist(xl,vl,Bmax())|range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t) < 0&dist(xf,vf,-af_0)+L() < dist(xl,vl,Bmax())|range(af_0,-Bmin(),Amax())&vf+af_0*(t0+T()-t)>=0&dist(xf,vf,Bmin())+(af_0/Bmin()+1)*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < dist(xl,vl,Bmax()))");
+            QE using "xl<=xf :: L()>0 :: xf+L()<=xl :: nil"
+        ),
+        expand("plantT");
+        /*Loop invariant holds after acceleration correction (v = 0 or v = V)*/
+        composeb('Rlast);
+        MR("invBack(xf,vf,af,xl,vl,al,t,t0)", 'Rlast); <(
+          expandAllDefs();
+          auto,
+          composeb('Rlast);
+          MR("invBack(xf,vf,af,xl,vl,al,t,t0)", 'Rlast); <(
+            expand("invBack");
+            unfold;
+            expandAllDefs();
+            unfold;
+            fullSimplify;
+            orR(1);
+            hideR('R=="(-Bmax()<=0&0<=-Bmin())&xf+vf^2/(2*Bmin())+L() < xl+vl^2/(2*Bmax())");
+            QE using "vf=0&af < 0|vf=V()&af>0 :: Bmax()>=Bmin() :: Bmin()>0 :: Amax()>=Amin() :: Amin()>0 :: t<=t0+T() :: vf>=0 :: (-Bmax()<=af&af<=-Bmin())&xf+vf^2/(2*Bmin())+L() < xl+vl^2/(2*Bmax())|(-Bmin()<=af&af<=Amax())&vf+af*(t0+T()-t) < 0&xf+vf^2/(2*(-af))+L() < xl+vl^2/(2*Bmax())|(-Bmin()<=af&af<=Amax())&vf+af*(t0+T()-t)>=0&xf+vf^2/(2*Bmin())+(af/Bmin()+1)*(af/2*(t0+T()-t)^2+(t0+T()-t)*vf)+L() < xl+vl^2/(2*Bmax()) :: (-Bmin()<=0&0<=Amax())&xf+vf^2/(2*Bmin())+(t0+T()-t)*vf+L() < xl+vl^2/(2*Bmax()) :: nil",
+            /*Loop invariant holds after the dynamics continuous (end)*/
+            expand("invBack");
+            unfold;
+            dC("safeBackT(xf,vf,af,xl,vl,t0+T()-t)", 1); <(
+              "Use":
+                expand("range");
+                diffInvariant("t0<=t", 1);
+                dW(1) ; propClose,
+              "Show":
+                useLemma("ABZ/safeBackT invariant", "prop")
+            )
+          )
+        )
+      )
+    )
+)
+End.
+End.
+
+/*Front*/
+Theorem "ABZ/Safety - Front"
+
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+End.
+
+Problem
+    ctxt(vf,vl,af,al) & Hfront(xf,vf,xl,vl) & t0 = t-T -> [{ctrlU;{ctrlT;++?(t < t0 + T);};plantT;}*@invariant(invFront(xf,vf,af,xl,vl,al,t,t0))]xl + L <= xf
+End.
+
+Tactic "Proof"
+unfold;
+loop("invFront(xf,vf,af,xl,vl,al,t,t0)", 'Rlast); <(
+  "Init":
+    expandAllDefs() ; unfold ; fullSimplify ; QE,
+  "Post":
+    expandAllDefs() ; propClose,
+  "Step":
+    /*Induction step*/
+    expand("invFront");
+    unfold;
+    expand("ctrlU");
+    /*Loop invariant holds after ctrlU*/
+    MR("range(al,-Bmax(),Amax())", 'Rlast); <(
+      unfold,
+      composeb('Rlast);
+      expand("ctrlT");
+      expand("fallback");
+      /*Loop invariant holds after ctrlT (even if skipped)*/
+      MR("invFront(xf,vf,af,xl,vl,al,t,t0)", 'Rlast); <(
+        unfold; <(
+          "[?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());][t0:=t;]invFront(xf,vf,af,xl,vl,al,t,t0)":
+            /*Case impossible fallback*/
+            expand("safeFrontT");
+            andL('Llast);
+            QE using "xf<=xl :: L()>0 :: xl+L()<=xf :: nil",
+          "[?t < t0+T();]invFront(xf,vf,af,xl,vl,al,t,t0)":
+            /*Case ctrlT skipped*/
+            expand("invFront");
+            propClose,
+          "[?safeT(xf,vf,af,xl,vl);][t0:=t;]invFront(xf,vf,af,xl,vl,al,t,t0)":
+            /*Case guard satisfied*/
+            expand("safeT");
+            expand("invFront");
+            fullSimplify;
+            orL('L=="safeBackT(xf,vf,af,xl,vl,T())|safeFrontT(xf,vf,af,xl,vl,T())"); <(
+              "safeBackT(xf,vf,af,xl,vl,T())":
+                expand("safeBackT");
+                expand("safeFrontT");
+                andL('L)*;
+                QE using "L()>0 :: xf+L()<=xl :: xl+L()<=xf :: nil",
+              "safeFrontT(xf,vf,af,xl,vl,T())":
+                expand("range");
+                andR(1); <(
+                  "t<=t&t<=t+T()":
+                    QE using "T()>0 :: t<=t&t<=t+T() :: nil",
+                  "safeFrontT(xf,vf,af,xl,vl,t+T()-t)":
+                    QE using "safeFrontT(xf,vf,af,xl,vl,T()) :: safeFrontT(xf,vf,af,xl,vl,t+T()-t) :: nil"
+                )
+            ),
+          "[?xl<=xf;af:=*;?range(af,Amin(),Amax());][t0:=t;]invFront(xf,vf,af,xl,vl,al,t,t0)":
+            /*Case fallback*/
+            expand("invFront");
+            andR(1); <(
+              "range(t,t,t+T())":
+                expand("range");
+                QE using "T()>0 :: t<=t&t<=t+T() :: nil",
+              "range(al,-Bmax(),Amax())&E(vf,vl)&safeFrontT(xf,vf,af,xl,vl,t+T()-t)":
+                expand("safeFrontT");
+                useAt("PC9", "1", 'R~="p1()&p2()&p3()&#(q1()|q2())#");
+                unfold;
+                fullSimplify;
+                orL('Llast); <(
+                  "range(af_0,Amin(),Amax())&dist(xl,vl-V(),-Amax())+L() < dist(xf,vf-V(),-Amin())":
+                    unfold,
+                  "range(af_0,-Bmax(),Amin())&vf+af_0*(t0+T()-t)>V()&dist(xl,vl-V(),-Amax())+L() < dist(xf,vf-V(),-af_0)|range(af_0,-Bmax(),Amin())&vf+af_0*(t0+T()-t)<=V()&dist(xl,vl-V(),-Amax())+L() < dist(xf,vf-V(),-Amin())+(1-af_0/Amin())*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*(vf-V()))":
+                    orL('Llast); <(
+                      "range(af_0,-Bmax(),Amin())&vf+af_0*(t0+T()-t)>V()&dist(xl,vl-V(),-Amax())+L() < dist(xf,vf-V(),-af_0)":
+                        unfold;
+                        expandAllDefs();
+                        QE using "Amax()>=Amin() :: Amin()>0 :: V()>0 :: t0<=t&t<=t0+T() :: vf>=0&vl>=0&vf<=V()&vl<=V() :: -Bmax()<=af_0&af_0<=Amin() :: vf+af_0*(t0+T()-t)>V() :: xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(vf-V())^2/(2*(-af_0)) :: xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(vf-V())^2/(2*(-Amin())) :: nil",
+                      "range(af_0,-Bmax(),Amin())&vf+af_0*(t0+T()-t)<=V()&dist(xl,vl-V(),-Amax())+L() < dist(xf,vf-V(),-Amin())+(1-af_0/Amin())*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*(vf-V()))":
+                        expand("E") ; expand("range");
+                        QE using "Amax()>=Amin() :: Amin()>0 :: t0<=t&t<=t0+T() :: vf>=0&vl>=0&vf<=V()&vl<=V() :: (-Bmax()<=af_0&af_0<=Amin())&vf+af_0*(t0+T()-t)<=V()&dist(xl,vl-V(),-Amax())+L() < dist(xf,vf-V(),-Amin())+(1-af_0/Amin())*(af_0/2*(t0+T()-t)^2+(t0+T()-t)*(vf-V())) :: dist(xl,vl-V(),-Amax())+L() < dist(xf,vf-V(),-Amin()) :: nil"
+                    )
+                )
+            )
+        ),
+        expand("plantT");
+        /*Loop invariant holds after acceleration correction (v = 0 or v = V)*/
+        composeb('Rlast);
+        MR("invFront(xf,vf,af,xl,vl,al,t,t0)", 'Rlast); <(
+          unfold;
+          expandAllDefs();
+          unfold;
+          fullSimplify;
+          QE using "Amax()>=Amin() :: Amin()>0 :: Bmax()>=Bmin() :: Bmin()>0 :: -Bmax()<=0&0<=Amax() :: nil",
+          composeb('Rlast);
+          MR("invFront(xf,vf,af,xl,vl,al,t,t0)", 'Rlast); <(
+            unfold;
+            expandAllDefs();
+            unfold;
+            fullSimplify;
+            orL('L=="vf=0&af < 0|vf=V()&af>0"); <(
+              "vf=0&af < 0":
+                unfold;
+                allL2R('L=="vf=0");
+                fullSimplify;
+                orL('L=="(Amin()<=af&af<=Amax())&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-Amin()))|(-Bmax()<=af&af<=Amin())&af*(t0+T()-t)>V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&af*(t0+T()-t)<=V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-Amin()))+(1-af/Amin())*(af/2*(t0+T()-t)^2+(t0+T()-t)*(-V()))"); <(
+                  "(Amin()<=af&af<=Amax())&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-Amin()))":
+                    unfold;
+                    QE using "Amin()>0 :: af < 0 :: Amin()<=af :: nil",
+                  "(-Bmax()<=af&af<=Amin())&af*(t0+T()-t)>V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&af*(t0+T()-t)<=V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-Amin()))+(1-af/Amin())*(af/2*(t0+T()-t)^2+(t0+T()-t)*(-V()))":
+                    orL('L=="(-Bmax()<=af&af<=Amin())&af*(t0+T()-t)>V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-af))|(-Bmax()<=af&af<=Amin())&af*(t0+T()-t)<=V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-Amin()))+(1-af/Amin())*(af/2*(t0+T()-t)^2+(t0+T()-t)*(-V()))"); <(
+                      "(-Bmax()<=af&af<=Amin())&af*(t0+T()-t)>V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-af))":
+                        unfold;
+                        QE using "V()>0 :: t<=t0+T() :: af < 0 :: af*(t0+T()-t)>V() :: nil",
+                      "(-Bmax()<=af&af<=Amin())&af*(t0+T()-t)<=V()&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-Amin()))+(1-af/Amin())*(af/2*(t0+T()-t)^2+(t0+T()-t)*(-V()))":
+                        unfold;
+                        QE using "Amax()>=Amin() :: Amin()>0 :: Bmax()>=Bmin() :: Bmin()>0 :: V()>0 :: t<=t0+T() :: af < 0 :: af*(t0+T()-t)<=V() :: xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-Amin()))+(1-af/Amin())*(af/2*(t0+T()-t)^2+(t0+T()-t)*(-V())) :: -Bmax()<=0&xl+(vl-V())^2/(2*(-Amax()))+L() < xf+(-V())^2/(2*(-Amin()))+(t0+T()-t)*(-V()) :: nil"
+                    )
+                ),
+              "vf=V()&af>0":
+                unfold;
+                allL2R('L=="vf=V()");
+                cut("V()-V()=0"); <(
+                  "Use":
+                    allL2R('L=="V()-V()=0");
+                    fullSimplify;
+                    QE,
+                  "Show":
+                    QE using "V()-V()=0"
+                )
+            ),
+            /*Loop invariant holds after the dynamics continuous (end)*/
+            expand("invFront");
+            unfold;
+            dC("safeFrontT(xf,vf,af,xl,vl,t0+T()-t)", 1); <(
+              "Use":
+                expand("range");
+                diffInvariant("t0<=t", 1);
+                dW(1) ; propClose,
+              "Show":
+                useLemma("ABZ/safeFrontT invariant", "prop")
+            )
+          )
+        )
+      )
+    )
+)
+End.
+End.

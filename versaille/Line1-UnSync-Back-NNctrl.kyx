@@ -1,0 +1,130 @@
+Definitions
+
+/*Max acceleration range*/
+Real Amax;
+Real Amin;
+/*Max braking range*/
+Real Bmax;
+Real Bmin;
+/*Reaction time controlled*/
+Real T;
+/*Car length*/
+Real L;
+/*Speed Limit*/
+Real V;
+
+/**Helper functions**/
+/*Constant assumptions*/
+Bool ctxtConst <-> Amax >= Amin & Amin > 0
+    & Bmax >= Bmin & Bmin > 0
+    & T > 0
+    & L > 0
+    & V > 0;
+/*General model invariant*/
+Bool E(Real vf, Real vl) <-> vf >= 0 & vl >= 0 & vf <= V & vl <= V;
+Bool ctxt(Real vf, Real vl, Real af, Real al) <-> ctxtConst & E(vf,vl) & range(af,-Bmax, Amax) & range(al,-Bmax, Amax);
+/*Acceleration range*/
+Bool range(Real a, Real aLow, Real aHigh) <-> aLow <= a & a <= aHigh;
+/*Braking distance*/
+Real dist(Real x, Real v, Real b) = x + v^2/(2*b);
+
+/**Controllers**/
+/*Fallback control*/
+HP fallback ::= {?xf<=xl;af:=*;?range(af,-Bmax,-Bmin); ++ ?xl<=xf;af:=*;?range(af,Amin,Amax);};
+
+/*Unrestricted car controls "ctrl*_u"*/
+HP ctrlU ::= {al:=*;?range(al,-Bmax,Amax);};
+
+/*Controller conditions*/
+Bool safeBackT(Real xf, Real vf, Real af, Real xl, Real vl, Real t) <-> xf + L <= xl & (
+    range(af,-Bmax,-Bmin) & dist(xf,vf,Bmin) + L < dist(xl, vl, Bmax) /*Hard brake: is equivalent to the fallback */
+  | range(af,-Bmin,Amax) & vf + af*t < 0 & dist(xf,vf,-af) + L < dist(xl,vl,Bmax) /*Soft brake at low speed: stops before next control cycle*/
+  | range(af,-Bmin,Amax) & vf + af*t >= 0 & dist(xf,vf,Bmin) + (af/Bmin + 1)*(af/2*t^2 + t*vf) + L < dist(xl,vl,Bmax) /*General case*/
+);
+
+Bool safeT(Real xf, Real vf, Real af, Real xl, Real vl) <-> safeBackT(xf,vf,af,xl,vl,T) | safeFrontT(xf,vf,af,xl,vl,T);
+
+Bool safeFrontT(Real xf, Real vf, Real af, Real xl, Real vl, Real t) <-> xl + L <= xf & (
+  range(af,Amin,Amax) & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-Amin)) /*Hard acceleration: is equivalent to the fallback*/
+| range(af,-Bmax,Amin) & vf + af*t > V & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-af)) /* Reach max speed before next control cycle*/
+| range(af,-Bmax,Amin) & vf + af*t <= V & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-Amin) + (-af/Amin + 1)*(af/2*t^2 + t*(vf-V))) /*General case*/
+);
+
+HP ctrlT ::= {af:=*;?range(af,-Bmax,Amax);{fallback; ++ ?safeT(xf,vf,af,xl,vl);}t0:=t;};
+
+/**Dynamics**/
+HP plantT ::= {if ((vl = 0 & al < 0) | (vl = V & al > 0)) {al:=0;}; if ((vf = 0 & af < 0)|(vf = V & af > 0)) {af:=0;};{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1 & E(vf,vl) & t<=t0+T}};
+
+
+/*Safe zone behind*/
+Bool Hback(Real xf, Real vf, Real xl, Real vl) <-> xf + L <= xl & dist(xf,vf,Bmin) + L < dist(xl, vl, Bmax);
+
+/*Safe zone in front*/
+Bool Hfront(Real xf, Real vf, Real xl, Real vl) <-> xl + L <= xf & dist(xl,(vl-V),-Amax) + L < dist(xf,(vf-V),-Amin);
+
+/*Loop invariant*/
+Bool invBack(Real xf, Real vf, Real af, Real xl, Real vl, Real al, Real t, Real t0) <-> range(t, t0, t0+T)
+    & range(al,-Bmax,Amax)
+    & E(vf,vl)
+    & safeBackT(xf,vf,af,xl,vl,t0+T-t);
+
+Bool invFront(Real xf, Real vf, Real af, Real xl, Real vl, Real al, Real t, Real t0) <-> range(t, t0, t0+T)
+    & range(al,-Bmax,Amax)
+    & E(vf,vl)
+    & safeFrontT(xf,vf,af,xl,vl,t0+T-t);
+
+
+/* NN Controller */
+
+HP NNctrl ::= {
+    x1 := *;
+    x2 := *;
+    x3 := *;
+    {
+        {{
+            ?(x1>=x2 & x1>=x3);af:=*;?range(af,-Bmax,-Bmin);
+        }++?(!(x1>=x2 & x1>=x3));};
+        {{
+            ?(x2>x1 & x2>=x3);af:=0;
+        }++?(!(x2>x1 & x2>=x3));};
+        {{
+            ?(x3>x1 & x3>x2);af:=*;?range(af,Amin,Amax);
+        }++?(!(x3>x1 & x3>x2));}
+    };
+};
+
+HP nnFallback ::= {?xf<=xl;?range(af,-Bmax,-Bmin); ++ ?xl<=xf;?range(af,Amin,Amax);};
+
+HP fullNNctrl ::= {NNctrl;{nnFallback; ++ ?safeT(xf,vf,af,xl,vl);?range(af,-Bmax,Amax);};t0:=t;};
+
+
+
+End.
+
+ArchiveEntry "ABZ/Versaille/UnSync TT - Back - Ctrl-Only"
+
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+Real x1,x2,x3;
+End.
+
+Problem
+[fullNNctrl;]true
+End.
+End.
+
+ArchiveEntry "ABZ/Versaille/UnSync TT - Back - Ctrl-Full-Only"
+
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+Real x1,x2,x3;
+End.
+
+Problem
+ctxt(vf,vl,af,al) & Hback(xf,vf,xl,vl) & t0 = t-T -> [{ctrlU;{fullNNctrl;++?(t < t0 + T);};plantT;}*@invariant(invBack(xf,vf,af,xl,vl,al,t,t0))]xf + L <= xl
+End.
+End.

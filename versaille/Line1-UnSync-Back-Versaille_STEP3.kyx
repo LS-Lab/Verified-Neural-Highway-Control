@@ -1,0 +1,541 @@
+Theorem "ABZ/Versaille/UnSync TT - Back - Versaille_STEP3"
+
+Definitions
+/*Max acceleration range*/
+Real Amax;
+Real Amin;
+/*Max braking range*/
+Real Bmax;
+Real Bmin;
+/*Reaction time controlled*/
+Real T;
+/*Car length*/
+Real L;
+/*Speed Limit*/
+Real V;
+
+/**Helper functions**/
+/*Constant assumptions*/
+Bool ctxtConst <-> Amax >= Amin & Amin > 0
+    & Bmax >= Bmin & Bmin > 0
+    & T > 0
+    & L > 0
+    & V > 0;
+/*General model invariant*/
+Bool E(Real vf, Real vl) <-> vf >= 0 & vl >= 0 & vf <= V & vl <= V;
+Bool ctxt(Real vf, Real vl, Real af, Real al) <-> ctxtConst & E(vf,vl) & range(af,-Bmax, Amax) & range(al,-Bmax, Amax);
+/*Acceleration range*/
+Bool range(Real a, Real aLow, Real aHigh) <-> aLow <= a & a <= aHigh;
+/*Braking distance*/
+Real dist(Real x, Real v, Real b) = x + v^2/(2*b);
+
+/**Controllers**/
+/*Fallback control*/
+HP fallback ::= {?xf<=xl;af:=*;?range(af,-Bmax,-Bmin); ++ ?xl<=xf;af:=*;?range(af,Amin,Amax);};
+
+/*Unrestricted car controls "ctrl*_u"*/
+HP ctrlU ::= {al:=*;?range(al,-Bmax,Amax);};
+
+/*Controller conditions*/
+Bool safeBackT(Real xf, Real vf, Real af, Real xl, Real vl, Real t) <-> xf + L <= xl & (
+    range(af,-Bmax,-Bmin) & dist(xf,vf,Bmin) + L < dist(xl, vl, Bmax) /*Hard brake: is equivalent to the fallback */
+  | range(af,-Bmin,Amax) & vf + af*t < 0 & dist(xf,vf,-af) + L < dist(xl,vl,Bmax) /*Soft brake at low speed: stops before next control cycle*/
+  | range(af,-Bmin,Amax) & vf + af*t >= 0 & dist(xf,vf,Bmin) + (af/Bmin + 1)*(af/2*t^2 + t*vf) + L < dist(xl,vl,Bmax) /*General case*/
+);
+
+Bool safeT(Real xf, Real vf, Real af, Real xl, Real vl) <-> safeBackT(xf,vf,af,xl,vl,T) | safeFrontT(xf,vf,af,xl,vl,T);
+
+Bool safeFrontT(Real xf, Real vf, Real af, Real xl, Real vl, Real t) <-> xl + L <= xf & (
+  range(af,Amin,Amax) & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-Amin)) /*Hard acceleration: is equivalent to the fallback*/
+| range(af,-Bmax,Amin) & vf + af*t > V & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-af)) /* Reach max speed before next control cycle*/
+| range(af,-Bmax,Amin) & vf + af*t <= V & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-Amin) + (-af/Amin + 1)*(af/2*t^2 + t*(vf-V))) /*General case*/
+);
+
+HP ctrlT ::= {af:=*;?range(af,-Bmax,Amax);{fallback; ++ ?safeT(xf,vf,af,xl,vl);}t0:=t;};
+
+/**Dynamics**/
+HP plantT ::= {if ((vl = 0 & al < 0) | (vl = V & al > 0)) {al:=0;}; if ((vf = 0 & af < 0)|(vf = V & af > 0)) {af:=0;};{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1 & E(vf,vl) & t<=t0+T}};
+
+
+/*Safe zone behind*/
+Bool Hback(Real xf, Real vf, Real xl, Real vl) <-> xf + L <= xl & dist(xf,vf,Bmin) + L < dist(xl, vl, Bmax);
+
+/*Safe zone in front*/
+Bool Hfront(Real xf, Real vf, Real xl, Real vl) <-> xl + L <= xf & dist(xl,(vl-V),-Amax) + L < dist(xf,(vf-V),-Amin);
+
+/*Loop invariant*/
+Bool invBack(Real xf, Real vf, Real af, Real xl, Real vl, Real al, Real t, Real t0) <-> range(t, t0, t0+T)
+    & range(al,-Bmax,Amax)
+    & E(vf,vl)
+    & safeBackT(xf,vf,af,xl,vl,t0+T-t);
+
+Bool invFront(Real xf, Real vf, Real af, Real xl, Real vl, Real al, Real t, Real t0) <-> range(t, t0, t0+T)
+    & range(al,-Bmax,Amax)
+    & E(vf,vl)
+    & safeFrontT(xf,vf,af,xl,vl,t0+T-t);
+
+
+Bool modelplexPredicate(Real xf,Real vf,Real af,Real xl,Real vl,Real t,Real afpost,Real x1post,Real x2post,Real x3post,Real t0post) <-> (
+x1post >= x2post &
+x1post >= x3post &
+-Bmax() <= afpost &
+afpost <= -Bmin() &
+(
+  xf <= xl & t0post = t |
+  xl <= xf & Amin() <= afpost & afpost <= Amax() & t0post = t |
+  (
+    xf + L() <= xl &
+    (
+      xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+      -Bmin() <= afpost &
+      afpost <= Amax() &
+      vf + afpost * T()  <  0 &
+      xf + vf^2 / (2 * (-afpost)) + L()  <  xl + vl^2 / (2 * Bmax()) |
+      -Bmin() <= afpost &
+      afpost <= Amax() &
+      vf + afpost * T() >= 0 &
+      xf + vf^2 / (2 * Bmin()) +
+      (afpost / Bmin() + 1) * (afpost / 2 * T()^2 + T() * vf) +
+      L()  <
+       xl + vl^2 / (2 * Bmax())
+    ) |
+    xl + L() <= xf &
+    (
+      Amin() <= afpost &
+      afpost <= Amax() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-Amin())) |
+      afpost <= Amin() &
+      vf + afpost * T() > V() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-afpost)) |
+      afpost <= Amin() &
+      vf + afpost * T() <= V() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-Amin())) +
+      (1 - afpost / Amin()) * (afpost / 2 * T()^2 + T() * (vf - V()))
+    )
+  ) &
+  afpost <= Amax() & t0post = t
+) |
+(x1post  <  x2post | x1post  <  x3post) &
+(
+  x2post > x1post &
+  x2post >= x3post &
+  (
+    xf <= xl & -Bmax() <= 0 & 0 <= -Bmin() & afpost = 0 & t0post = t |
+    xl <= xf & Amin() <= 0 & 0 <= Amax() & afpost = 0 & t0post = t |
+    (
+      xf + L() <= xl &
+      (
+        -Bmax() <= 0 &
+        0 <= -Bmin() &
+        xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+        -Bmin() <= 0 &
+        0 <= Amax() & vf  <  0 & xf + vf^2 / 0 + L()  <  xl + vl^2 / (2 * Bmax()) |
+        -Bmin() <= 0 &
+        0 <= Amax() &
+        vf >= 0 &
+        xf + vf^2 / (2 * Bmin()) + (0 / Bmin() + 1) * (T() * vf) + L()  <
+         xl + vl^2 / (2 * Bmax())
+      ) |
+      xl + L() <= xf &
+      (
+        Amin() <= 0 &
+        0 <= Amax() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+         xf + (vf - V())^2 / (2 * (-Amin())) |
+        -Bmax() <= 0 &
+        0 <= Amin() &
+        vf > V() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <  xf + (vf - V())^2 / 0 |
+        -Bmax() <= 0 &
+        0 <= Amin() &
+        vf <= V() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+         xf + (vf - V())^2 / (2 * (-Amin())) +
+        (1 - 0 / Amin()) * (T() * (vf - V()))
+      )
+    ) &
+    -Bmax() <= 0 & 0 <= Amax() & afpost = 0 & t0post = t
+  ) |
+  (x2post <= x1post | x2post  <  x3post) &
+  (
+    x3post > x1post &
+    x3post > x2post &
+    Amin() <= afpost &
+    afpost <= Amax() &
+    (
+      xf <= xl & -Bmax() <= afpost & afpost <= -Bmin() & t0post = t |
+      xl <= xf & t0post = t |
+      (
+        xf + L() <= xl &
+        (
+          -Bmax() <= afpost &
+          afpost <= -Bmin() &
+          xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= afpost &
+          vf + afpost * T()  <  0 &
+          xf + vf^2 / (2 * (-afpost)) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= afpost &
+          vf + afpost * T() >= 0 &
+          xf + vf^2 / (2 * Bmin()) +
+          (afpost / Bmin() + 1) * (afpost / 2 * T()^2 + T() * vf) +
+          L()  <
+           xl + vl^2 / (2 * Bmax())
+        ) |
+        xl + L() <= xf &
+        (
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) |
+          -Bmax() <= afpost &
+          afpost <= Amin() &
+          vf + afpost * T() > V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-afpost)) |
+          -Bmax() <= afpost &
+          afpost <= Amin() &
+          vf + afpost * T() <= V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) +
+          (1 - afpost / Amin()) * (afpost / 2 * T()^2 + T() * (vf - V()))
+        )
+      ) &
+      -Bmax() <= afpost & t0post = t
+    ) |
+    (x3post <= x1post | x3post <= x2post) &
+    (
+      xf <= xl & -Bmax() <= af & af <= -Bmin() & afpost = af & t0post = t |
+      xl <= xf & Amin() <= af & af <= Amax() & afpost = af & t0post = t |
+      (
+        xf + L() <= xl &
+        (
+          -Bmax() <= af &
+          af <= -Bmin() &
+          xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= af &
+          af <= Amax() &
+          vf + af * T()  <  0 &
+          xf + vf^2 / (2 * (-af)) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= af &
+          af <= Amax() &
+          vf + af * T() >= 0 &
+          xf + vf^2 / (2 * Bmin()) +
+          (af / Bmin() + 1) * (af / 2 * T()^2 + T() * vf) +
+          L()  <
+           xl + vl^2 / (2 * Bmax())
+        ) |
+        xl + L() <= xf &
+        (
+          Amin() <= af &
+          af <= Amax() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) |
+          -Bmax() <= af &
+          af <= Amin() &
+          vf + af * T() > V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-af)) |
+          -Bmax() <= af &
+          af <= Amin() &
+          vf + af * T() <= V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) +
+          (1 - af / Amin()) * (af / 2 * T()^2 + T() * (vf - V()))
+        )
+      ) &
+      -Bmax() <= af & af <= Amax() & afpost = af & t0post = t
+    )
+  )
+)
+);
+
+Bool modelplexPredicateNotRedundant(Real xf,Real vf,Real xl,Real vl,Real t,Real afpost,Real x1post,Real x2post,Real x3post,Real t0post) <-> (
+x1post >= x2post &
+x1post >= x3post &
+-Bmax() <= afpost &
+afpost <= -Bmin() &
+(
+  xf <= xl & t0post = t |
+  xl <= xf & Amin() <= afpost & afpost <= Amax() & t0post = t |
+  (
+    xf + L() <= xl &
+    (
+      xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+      -Bmin() <= afpost &
+      afpost <= Amax() &
+      vf + afpost * T()  <  0 &
+      xf + vf^2 / (2 * (-afpost)) + L()  <  xl + vl^2 / (2 * Bmax()) |
+      -Bmin() <= afpost &
+      afpost <= Amax() &
+      vf + afpost * T() >= 0 &
+      xf + vf^2 / (2 * Bmin()) +
+      (afpost / Bmin() + 1) * (afpost / 2 * T()^2 + T() * vf) +
+      L()  <
+       xl + vl^2 / (2 * Bmax())
+    ) |
+    xl + L() <= xf &
+    (
+      Amin() <= afpost &
+      afpost <= Amax() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-Amin())) |
+      afpost <= Amin() &
+      vf + afpost * T() > V() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-afpost)) |
+      afpost <= Amin() &
+      vf + afpost * T() <= V() &
+      xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+       xf + (vf - V())^2 / (2 * (-Amin())) +
+      (1 - afpost / Amin()) * (afpost / 2 * T()^2 + T() * (vf - V()))
+    )
+  ) &
+  afpost <= Amax() & t0post = t
+) |
+(x1post  <  x2post | x1post  <  x3post) &
+(
+  x2post > x1post &
+  x2post >= x3post &
+  (
+    xf <= xl & -Bmax() <= 0 & 0 <= -Bmin() & afpost = 0 & t0post = t |
+    xl <= xf & Amin() <= 0 & 0 <= Amax() & afpost = 0 & t0post = t |
+    (
+      xf + L() <= xl &
+      (
+        -Bmax() <= 0 &
+        0 <= -Bmin() &
+        xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+        -Bmin() <= 0 &
+        0 <= Amax() & vf  <  0 & xf + vf^2 / 0 + L()  <  xl + vl^2 / (2 * Bmax()) |
+        -Bmin() <= 0 &
+        0 <= Amax() &
+        vf >= 0 &
+        xf + vf^2 / (2 * Bmin()) + (0 / Bmin() + 1) * (T() * vf) + L()  <
+         xl + vl^2 / (2 * Bmax())
+      ) |
+      xl + L() <= xf &
+      (
+        Amin() <= 0 &
+        0 <= Amax() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+         xf + (vf - V())^2 / (2 * (-Amin())) |
+        -Bmax() <= 0 &
+        0 <= Amin() &
+        vf > V() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <  xf + (vf - V())^2 / 0 |
+        -Bmax() <= 0 &
+        0 <= Amin() &
+        vf <= V() &
+        xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+         xf + (vf - V())^2 / (2 * (-Amin())) +
+        (1 - 0 / Amin()) * (T() * (vf - V()))
+      )
+    ) &
+    -Bmax() <= 0 & 0 <= Amax() & afpost = 0 & t0post = t
+  ) |
+  (x2post <= x1post | x2post  <  x3post) &
+  (
+    x3post > x1post &
+    x3post > x2post &
+    Amin() <= afpost &
+    afpost <= Amax() &
+    (
+      xf <= xl & -Bmax() <= afpost & afpost <= -Bmin() & t0post = t |
+      xl <= xf & t0post = t |
+      (
+        xf + L() <= xl &
+        (
+          -Bmax() <= afpost &
+          afpost <= -Bmin() &
+          xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= afpost &
+          vf + afpost * T()  <  0 &
+          xf + vf^2 / (2 * (-afpost)) + L()  <  xl + vl^2 / (2 * Bmax()) |
+          -Bmin() <= afpost &
+          vf + afpost * T() >= 0 &
+          xf + vf^2 / (2 * Bmin()) +
+          (afpost / Bmin() + 1) * (afpost / 2 * T()^2 + T() * vf) +
+          L()  <
+           xl + vl^2 / (2 * Bmax())
+        ) |
+        xl + L() <= xf &
+        (
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) |
+          -Bmax() <= afpost &
+          afpost <= Amin() &
+          vf + afpost * T() > V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-afpost)) |
+          -Bmax() <= afpost &
+          afpost <= Amin() &
+          vf + afpost * T() <= V() &
+          xl + (vl - V())^2 / (2 * (-Amax())) + L()  <
+           xf + (vf - V())^2 / (2 * (-Amin())) +
+          (1 - afpost / Amin()) * (afpost / 2 * T()^2 + T() * (vf - V()))
+        )
+      ) &
+      -Bmax() <= afpost & t0post = t
+    )
+  )
+)
+);
+
+/* Simplificaton for BACK Case */
+Bool modelplexPredicateSimplified(Real xf,Real vf,Real xl,Real vl, Real x1post, Real x2post, Real x3post) <-> (
+
+x1post >= x2post & x1post >= x3post |
+x2post > x1post & x2post >= x3post & (
+(
+    -Bmin() <= 0 &
+    0 <= Amax() &
+    vf >= 0 &
+    xf + vf^2 / (2 * Bmin()) + (0 / Bmin() + 1) * (T() * vf) + L()  <
+     xl + vl^2 / (2 * Bmax())
+)
+) |
+x3post > x1post & x3post > x2post & (
+    (
+      -Bmax() <= Amax() &
+      Amax() <= -Bmin() &
+      xf + vf^2 / (2 * Bmin()) + L()  <  xl + vl^2 / (2 * Bmax()) |
+      -Bmin() <= Amax() &
+      vf + Amax() * T()  <  0 &
+      xf + vf^2 / (2 * (-Amax())) + L()  <  xl + vl^2 / (2 * Bmax()) |
+      -Bmin() <= Amax() &
+      vf + Amax() * T() >= 0 &
+      xf + vf^2 / (2 * Bmin()) +
+      (Amax() / Bmin() + 1) * (Amax() / 2 * T()^2 + T() * vf) +
+      L()  <
+       xl + vl^2 / (2 * Bmax())
+    )    
+)
+
+);
+
+Bool invariant(Real xf,Real vf, Real af, Real xl,Real vl, Real al, Real t, Real t0) <-> (ctxtConst & invBack(xf,vf,af,xl,vl,al,t,t0));
+
+Bool invariantSimplified(Real xf, Real vf, Real xl, Real vl) <-> (ctxtConst & E(vf,vl) & Hback(xf,vf,xl,vl));
+
+Bool additionalContext(Real xf,Real vf,Real xl,Real vl,Real x1post,Real x2post,Real x3post,Real afpost,Real t0,Real t0post,Real t) <-> (
+    /*t0post=t & tpost=t & xfpost=xf & vfpost=vf & xlpost=xl & vlpost=vl &
+    -Bmax() <= alpost  &  alpost <= Amax() &*/
+    ((x1post >= x2post  &  x1post >= x3post) -> (-Bmax() <= afpost  &  afpost <= -Bmin())) &
+    ((x2post > x1post  &  x2post >= x3post) -> afpost = 0) & 
+    ((x3post > x1post  &  x3post > x2post) -> afpost = Amax()) &
+    Bmax() >= Bmin() & Amax() >= Amin() & Bmin() > 0 & Amin() > 0 & T()>0 & L()>0 & V()>0 &
+    xf + L() <= xl & t0post=t & t0 <= t & t <= t0 + T()
+);
+
+End.
+
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+Real x1,x2,x3;
+Real x1post,x2post,x3post;
+Real xlpost,vlpost,alpost;
+Real xfpost,vfpost,afpost;
+Real tpost,t0post;
+End.
+
+Problem
+additionalContext(xf,vf,xl,vl,x1post,x2post,x3post,afpost,t0,t0post,t)
+->
+(
+(invariantSimplified(xf,vf,xl,vl) -> modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))
+<->
+(
+\forall af \forall al ((invariant(xf,vf,af,xl,vl,al,t,t0)) -> modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post))
+)
+)
+End.
+Tactic "Proofscript"
+unfold;
+cut("invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))"); <(
+  "Use":
+    hideL('L=="additionalContext(xf,vf,xl,vl,x1post,x2post,x3post,afpost,t0,t0post,t)");
+    cut("\forall af \forall al (modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post)<->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))"); <(
+      "Use":
+        equivR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post))"); <(
+          "(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+            unfold;
+            equivL('L=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))"); <(
+              "(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+                unfold;
+                allL("af", -5) ; allL("al", -5) ; allL("af", -1) ; allL("al", -1);
+                propClose,
+              "!(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&!\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+                propClose
+            ),
+          "!(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&!\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+            implyR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)");
+            equivL('L=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))"); <(
+              "(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+                unfold,
+              "!(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&!\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+                unfold;
+                allL("af", -2) ; allL("al", -2);
+                allL("af", -1) ; allL("al", -1);
+                propClose
+            )
+        ),
+      "Show":
+        hideR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post))");
+        hideL('L=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))");
+        allR('R=="\forall af \forall al (modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post)<->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))");
+        allR('R=="\forall al (modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post)<->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))");
+        useLemma("ABZ/Versaille/UnSync TT - Back - Versaille_STEP0")
+    ),
+  "Show":
+    hideR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicate(xf,vf,af,xl,vl,t,afpost,x1post,x2post,x3post,t0post))");
+    cut("invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)"); <(
+      "Use":
+        equivR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))"); <(
+          "(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+            equivL('L=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)"); <(
+              "(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&(\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+                unfold;
+                implyL('L=="\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)"); <(
+                  "\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)":
+                    existsR("af", 2) ; existsR("al", 2) ; hideR(1) ; propClose,
+                  "modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)":
+                    propClose
+                ),
+              "!(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&!(\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+                unfold
+            ),
+          "!(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&!\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+            equivL('L=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)"); <(
+              "(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&(\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+                unfold,
+              "!(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post))&!(\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))":
+                unfold;
+                allL("af", -2) ; allL("al", -2);
+                propClose
+            )
+        ),
+      "Show":
+        hideR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\forall af \forall al (invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))");
+        cut("invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->invariantSimplified(xf,vf,xl,vl)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)"); <(
+          "Use":
+            cut("additionalContext(xf,vf,xl,vl,x1post,x2post,x3post,afpost,t0,t0post,t)->(\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)<->invariantSimplified(xf,vf,xl,vl)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))"); <(
+              "Use":
+                propClose,
+              "Show":
+                hideR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)") ; hideL('L=="additionalContext(xf,vf,xl,vl,x1post,x2post,x3post,afpost,t0,t0post,t)") ; hideL('L=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->invariantSimplified(xf,vf,xl,vl)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)") ; expandAllDefs() ; useLemma("ABZ/Versaille/UnSync TT - Back - Versaille_STEP1", "nil")
+            ),
+          "Show":
+            hideR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->\exists af \exists al invariant(xf,vf,af,xl,vl,al,t,t0)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)") ; cut("additionalContext(xf,vf,xl,vl,x1post,x2post,x3post,afpost,t0,t0post,t)->(invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->invariantSimplified(xf,vf,xl,vl)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post))"); <(
+              "Use":
+                propClose,
+              "Show":
+                hideR('R=="invariantSimplified(xf,vf,xl,vl)->modelplexPredicateSimplified(xf,vf,xl,vl,x1post,x2post,x3post)<->invariantSimplified(xf,vf,xl,vl)->modelplexPredicateNotRedundant(xf,vf,xl,vl,t,afpost,x1post,x2post,x3post,t0post)") ; hideL('L=="additionalContext(xf,vf,xl,vl,x1post,x2post,x3post,afpost,t0,t0post,t)") ; expandAllDefs() ; useLemma("ABZ/Versaille/UnSync TT - Back - Versaille_STEP2", "nil")
+            )
+        )
+    )
+)
+End.
+End.

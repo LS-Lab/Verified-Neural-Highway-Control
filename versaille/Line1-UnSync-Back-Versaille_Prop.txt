@@ -1,0 +1,27 @@
+(Amax >= Amin  &
+  Amin > 0  &
+  Bmax >= Bmin  &
+  Bmin > 0  &
+  T > 0  &
+  L > 0  &
+  V > 0)&
+  (vf >= 0  &
+  vl >= 0  &
+  vf <= V  &
+  vl <= V)&
+  xf + L <= xl  &
+  xf + vf^2/(2*Bmin) + L  <  xl + vl^2/(2*Bmax)   ->   x1post >= x2post  &
+  x1post >= x3post  |  x2post > x1post  &
+  x2post >= x3post  &
+( -Bmin <= 0  &
+  0 <= Amax  &
+  vf >= 0  &
+  xf + vf^2/(2*Bmin) + (0/Bmin + 1)*(T*vf) + L  <  xl + vl^2/(2*Bmax))  |  x3post > x1post  &
+  x3post > x2post  &
+(-Bmax <= Amax  &
+  Amax <= -Bmin  &
+  xf + vf^2/(2*Bmin) + L  <  xl + vl^2/(2*Bmax)  |  -Bmin <= Amax  &
+  vf + Amax*T  <  0  &
+  xf + vf^2/(2*(-Amax)) + L  <  xl + vl^2/(2*Bmax)  |  -Bmin <= Amax  &
+  vf + Amax*T >= 0  &
+  xf + vf^2/(2*Bmin) + (Amax/Bmin + 1)*(Amax/2*T^2 + T*vf) + L  <  xl + vl^2/(2*Bmax))
