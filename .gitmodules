@@ -1,0 +1,3 @@
+[submodule "abz2025_casestudy_autonomous_driving"]
+	path = abz2025_casestudy_autonomous_driving
+	url = https://gitlab.kit.edu/paul.teuber/abz2025_casestudy_autonomous_driving.git

@@ -1,0 +1,335 @@
+Definitions
+/*Max acceleration range*/
+Real Amax;
+Real Amin;
+/*Max braking range*/
+Real Bmax;
+Real Bmin;
+/*Reaction time controlled*/
+Real T;
+/*Car length*/
+Real L;
+/*Speed Limit*/
+Real V;
+
+/**Helper functions**/
+/*Constant assumptions*/
+Bool ctxtConst <-> Amax >= Amin & Amin > 0
+    & Bmax >= Bmin & Bmin > 0
+    & T > 0
+    & L > 0
+    & V > 0;
+/*General model invariant*/
+Bool E(Real vf, Real vl) <-> vf >= 0 & vl >= 0 & vf <= V & vl <= V;
+Bool ctxt(Real vf, Real vl, Real af, Real al) <-> ctxtConst & E(vf,vl) & range(af,-Bmax, Amax) & range(al,-Bmax, Amax);
+/*Acceleration range*/
+Bool range(Real a, Real aLow, Real aHigh) <-> aLow <= a & a <= aHigh;
+/*Braking distance*/
+Real dist(Real x, Real v, Real b) = x + v^2/(2*b);
+
+/**Controllers**/
+/*Fallback control*/
+HP fallback ::= {?xf<=xl;af:=*;?range(af,-Bmax,-Bmin); ++ ?xl<=xf;af:=*;?range(af,Amin,Amax);};
+
+/*Unrestricted car controls "ctrl*_u"*/
+HP ctrlU ::= {al:=*;?range(al,-Bmax,Amax);};
+
+/*Controller conditions*/
+Bool safeBackT(Real xf, Real vf, Real af, Real xl, Real vl, Real t) <-> xf + L <= xl & (
+    range(af,-Bmax,-Bmin) & dist(xf,vf,Bmin) + L < dist(xl, vl, Bmax) /*Hard brake: is equivalent to the fallback */
+  | range(af,-Bmin,Amax) & vf + af*t < 0 & dist(xf,vf,-af) + L < dist(xl,vl,Bmax) /*Soft brake at low speed: stops before next control cycle*/
+  | range(af,-Bmin,Amax) & vf + af*t >= 0 & dist(xf,vf,Bmin) + (af/Bmin + 1)*(af/2*t^2 + t*vf) + L < dist(xl,vl,Bmax) /*General case*/
+);
+
+Bool safeT(Real xf, Real vf, Real af, Real xl, Real vl) <-> safeBackT(xf,vf,af,xl,vl,T) | safeFrontT(xf,vf,af,xl,vl,T);
+
+Bool safeFrontT(Real xf, Real vf, Real af, Real xl, Real vl, Real t) <-> xl + L <= xf & (
+  range(af,Amin,Amax) & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-Amin)) /*Hard acceleration: is equivalent to the fallback*/
+| range(af,-Bmax,Amin) & vf + af*t > V & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-af)) /* Reach max speed before next control cycle*/
+| range(af,-Bmax,Amin) & vf + af*t <= V & (dist(xl,vl-V,-Amax) + L < dist(xf,vf-V,-Amin) + (-af/Amin + 1)*(af/2*t^2 + t*(vf-V))) /*General case*/
+);
+
+HP ctrlT ::= {af:=*;?range(af,-Bmax,Amax);{fallback; ++ ?safeT(xf,vf,af,xl,vl);}t0:=t;};
+
+/**Dynamics**/
+HP plantT ::= {if ((vl = 0 & al < 0) | (vl = V & al > 0)) {al:=0;}; if ((vf = 0 & af < 0)|(vf = V & af > 0)) {af:=0;};{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1 & E(vf,vl) & t<=t0+T}};
+
+
+/*Safe zone behind*/
+Bool Hback(Real xf, Real vf, Real xl, Real vl) <-> xf + L <= xl & dist(xf,vf,Bmin) + L < dist(xl, vl, Bmax);
+
+/*Safe zone in front*/
+Bool Hfront(Real xf, Real vf, Real xl, Real vl) <-> xl + L <= xf & dist(xl,(vl-V),-Amax) + L < dist(xf,(vf-V),-Amin);
+
+/*Loop invariant*/
+Bool invBack(Real xf, Real vf, Real af, Real xl, Real vl, Real al, Real t, Real t0) <-> range(t, t0, t0+T)
+    & range(al,-Bmax,Amax)
+    & E(vf,vl)
+    & safeBackT(xf,vf,af,xl,vl,t0+T-t);
+
+Bool invFront(Real xf, Real vf, Real af, Real xl, Real vl, Real al, Real t, Real t0) <-> range(t, t0, t0+T)
+    & range(al,-Bmax,Amax)
+    & E(vf,vl)
+    & safeFrontT(xf,vf,af,xl,vl,t0+T-t);
+
+
+/* NN Controller */
+
+HP NNctrl ::= {
+  y1 := *;
+  y2 := *;
+  y3 := *;
+  {
+      {{
+          ?(y1>=y2 & y1>=y3);af:=*;?range(af,-Bmax,-Bmin);
+      }++?(!(y1>=y2 & y1>=y3));};
+      {{
+          ?(y2>y1 & y2>=y3);af:=0;
+      }++?(!(y2>y1 & y2>=y3));};
+      {{
+          ?(y3>y1 & y3>y2);af:=*;?range(af,Amin,Amax);
+      }++?(!(y3>y1 & y3>y2));}
+  };
+};
+
+HP nnFallback ::= {?xf<=xl;?range(af,-Bmax,-Bmin); ++ ?xl<=xf;?range(af,Amin,Amax);};
+
+HP fullNNctrl ::= {NNctrl;{nnFallback; ++ ?safeT(xf,vf,af,xl,vl);?range(af,-Bmax,Amax);};t0:=t;};
+
+End.
+
+Lemma "Simple random merge"
+
+ProgramVariables
+  Real x;
+End.
+
+Problem
+  {x:=*; x:=*;} <= {x:=*;}
+End.
+
+Tactic "Simple_random_merge_2025-02-12_18-13-51"
+useAt("sequence identity left", "1", 'R=="{x:=*;#x:=*;#}<={x:=*;}");
+useAt("refinement :* merge", "0", 'R=="#x:=*;?true;x:=*;#<={x:=*;}");
+useAt("sequence identity right", "1", 'R=="{x:=*;?\exists y_ true;}<=#x:=*;#");
+refSeq(1) ; andR(1); <(
+  "{x:=*;}<={x:=*;}":
+    refRefl('R=="{x:=*;}<={x:=*;}"),
+  "[x:=*;]{?\exists y_ true;}<={?true;}":
+    refTest(1.1) ; auto
+)
+End.
+End.
+
+Lemma "ABZ/Refinement Controller"
+
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+Real y1,y2,y3;
+End.
+
+Problem
+  ctxtConst -> fullNNctrl; <= y1 := *;y2 := *;y3 := *;ctrlT;
+End.
+
+Tactic "New Proof"
+unfold ; expand("fullNNctrl") ; expand("NNctrl");
+useAt("sequence associative", "1", 1.0) ; refSeq(1) ; refRefl(1.0) ; unfold;
+useAt("sequence associative", "1", 1.0) ; refSeq(1) ; refRefl(1.0) ; unfold;
+useAt("sequence associative", "1", 1.0) ; refSeq(1) ; refRefl(1.0) ; unfold;
+expand("ctrlT");
+useAt("sequence associative", "0", 1.1) ; refSeq(1) ; andR(1); <(
+  "{{?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?!(y1>=y2&y1>=y3);}{?y2>y1&y2>=y3;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}<={af:=*;?range(af,-Bmax(),Amax());}":
+    refTrans("?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());", 1) ; andR(1); <(
+      "{{?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?!(y1>=y2&y1>=y3);}{?y2>y1&y2>=y3;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}<={?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}":
+        useAt("distribute right", "1", 1.0) ; refChoiceL(1) ; andR(1); <(
+          "{{?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());}{?y2>y1&y2>=y3;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}<={?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}":
+            hideChoiceR(1.1) ; useAt("sequence identity right", "1", 1.1);
+            focus(1.0.1) ; unfold;
+            refTrans("{?false;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}", 1) ; andR(1); <(
+              "{{?y2>y1&y2>=y3;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}<={{?false;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}":
+                focus(1.1.0.0.0.0) ; QE,
+              "{{?false;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}<={?true;}":
+                useAt("annihile left", "0", 1.0.0.0) ; refChoiceComm(1.0.0) ; refChoiceId(1.0.0);
+                useAt("sequence identity left", "1", 1.1) ; refSeq(1) ; refTest(1.0) ; unfold;
+                refTrans("?false;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);", 1) ; andR(1); <(
+                  "{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}<={?false;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}":
+                    focus(1.1.0.0.0) ; QE,
+                  "{?false;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}<={?true;}":
+                    useAt("annihile left", "0", 1.0.0) ; testChoice(1.0) ; refTest(1) ; prop
+                )
+            ),
+          "{?!(y1>=y2&y1>=y3);{?y2>y1&y2>=y3;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}<={?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}":
+            useAt("sequence identity left", "1", 1.1) ; refSeq(1) ; refTest(1.0) ; unfold;
+            useAt("distribute right", "1", 1.0) ; refChoiceL(1) ; andR(1); <(
+              "{{?y2>y1&y2>=y3;af:=0;}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}<={?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}":
+                hideChoiceL(1.1) ; hideChoiceR(1.1) ; useAt("sequence identity right", "1", 1.1);
+                focus(1.0.1) ; unfold;
+                refChoiceL(1) ; andR(1); <(
+                  "{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}<={?true;}":
+                    refTrans("?false;af:=*;?range(af,Amin(),Amax());", 1) ; andR(1); <(
+                      "{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}<={?false;af:=*;?range(af,Amin(),Amax());}":
+                        focus(1.1.0.0) ; QE,
+                      "{?false;af:=*;?range(af,Amin(),Amax());}<={?true;}":
+                        useAt("annihile left", "0", 1.0) ; refTest(1);
+                        propClose
+                    ),
+                  "{?!(y3>y1&y3>y2);}<={?true;}":
+                    refTest(1) ; prop
+                ),
+              "{?!(y2>y1&y2>=y3);{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}}<={?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}":
+                useAt("sequence identity left", "1", 1.1) ; refSeq(1) ; refTest(1.0) ; unfold;
+                refChoiceL(1) ; andR(1); <(
+                  "{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}<={?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}":
+                    hideChoiceL(1.1) ; hideChoiceL(1.1) ; cohide(1) ; refRefl(1),
+                  "{?!(y3>y1&y3>y2);}<={?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}":
+                    hideChoiceR(1.1) ; skipRandom(1.1.1.0) ; refSeqIdL(1.1.1) ; testSeq(1.1) ; refTest(1);
+                    QE
+                )
+            )
+        ),
+      "{?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?y2>y1&y2>=y3;af:=0;++?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}<={af:=*;?range(af,-Bmax(),Amax());}":
+        useAt("sequence identity left", "1", 1.1) ; refChoiceL(1) ; refChoiceL(1.1) ; unfold; <(
+          "{?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());}<={?true;af:=*;?range(af,-Bmax(),Amax());}":
+            refSeq(1) ; refTest(1.0) ; refSeq(1.1.1) ; refRefl(1.1.1.0) ; unfold;
+            refTest(1) ; expandAllDefs() ; QE,
+          "{?y2>y1&y2>=y3;af:=0;}<={?true;af:=*;?range(af,-Bmax(),Amax());}":
+            useAt("refinement assign", "0", 1.0.1) ; refSeq(1) ; refTest(1.0) ; refSeq(1.1.1) ; refRefl(1.1.1.0) ; unfold;
+            refTest(1) ; expandAllDefs() ; QE,
+          "{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());}<={?true;af:=*;?range(af,-Bmax(),Amax());}":
+            refSeq(1) ; refTest(1.0) ; refSeq(1.1.1) ; refRefl(1.1.1.0) ; unfold;
+            refTest(1) ; expandAllDefs() ; QE
+        )
+    ),
+  "[{?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?!(y1>=y2&y1>=y3);}{?y2>y1&y2>=y3;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}]{{nnFallback{|^@|};++?safeT(xf,vf,af,xl,vl);?range(af,-Bmax(),Amax());}t0:=t;}<={{fallback{|^@|};++?safeT(xf,vf,af,xl,vl);}t0:=t;}":
+    G('R=="[{?y1>=y2&y1>=y3;af:=*;?range(af,-Bmax(),-Bmin());++?!(y1>=y2&y1>=y3);}{?y2>y1&y2>=y3;af:=0;++?!(y2>y1&y2>=y3);}{?y3>y1&y3>y2;af:=*;?range(af,Amin(),Amax());++?!(y3>y1&y3>y2);}]{{nnFallback{|^@|};++?safeT(xf,vf,af,xl,vl);?range(af,-Bmax(),Amax());}t0:=t;}<={{fallback{|^@|};++?safeT(xf,vf,af,xl,vl);}t0:=t;}") ; focus(1.0.0) ; refChoiceL(1) ; hideChoiceR(1.0.1) ; hideChoiceL(1.1.1) ; andR(1) ; <(
+    "nnFallback{|^@|};<=fallback{|^@|};": expand("nnFallback") ; expand("fallback") ; skipRandom(1.1.0.1.0) ; refSeqIdL(1.1.0.1) ; skipRandom(1.1.1.1.0) ; refSeqIdL(1.1.1.1) ; refRefl('R=="{?xf<=xl;?range(af,-Bmax(),-Bmin());++?xl<=xf;?range(af,Amin(),Amax());}<={?xf<=xl;?range(af,-Bmax(),-Bmin());++?xl<=xf;?range(af,Amin(),Amax());}"),
+    "{?safeT(xf,vf,af,xl,vl);?range(af,-Bmax(),Amax());}<={?safeT(xf,vf,af,xl,vl);}": useAt("sequence identity right", "1", 1.1) ; focus(1.1.1.0) ; auto
+  )
+);
+expandAllDefs()
+End.
+End.
+
+Lemma "ABZ/Refinement NN variables"
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+Real y1,y2,y3;
+End.
+
+Problem
+  {ctrlU;{y1:=*;y2:=*;y3:=*;ctrlT;++?(t < t0 + T);};plantT;}* <= y1:=*;y2:=*;y3:=*;{ctrlU;{ctrlT;++?(t < t0 + T);};plantT;}*
+End.
+
+Tactic "Refinement NN variables: Proof"
+refTrans("{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*", 'R=="{{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}");
+andR('R=="{{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}&{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}"); <(
+  "{{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}":
+    useAt("sequence identity left", "1", 'R=="#{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*#<={{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}");
+    focus('R=="{?true;{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={#y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*#{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}");
+    useAt("unfold left", "1", 'R=="{?true;}<={y1:=*;y2:=*;y3:=*;#{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*#}");
+    hideChoiceR('R=="{?true;}<={y1:=*;y2:=*;y3:=*;#{?true;++{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}#}");
+    (skipRandom(1.1.0); refSeqIdL(1.1))*3; cohide(1); refRefl(1),
+  "{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}":
+    refLoopR('R=="{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}");
+    refTrans("{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};y1:=*;y2:=*;y3:=*;{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};", 'R=="{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}");
+    andR('R=="{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};y1:=*;y2:=*;y3:=*;{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}&{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};y1:=*;y2:=*;y3:=*;{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}"); <(
+      "{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};y1:=*;y2:=*;y3:=*;{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}":
+        focus('R=="{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};#y1:=*;y2:=*;y3:=*;{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};#}");
+        G(1)*2;
+        useAt("sequence associative", "0", 'R=="{{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={y1:=*;y2:=*;#y3:=*;{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};#}");
+        refDistrL('R=="{{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={y1:=*;y2:=*;#y3:=*;{ctrlT{|^@|};++?t < t0+T();}#plantT{|^@|};}");
+        useAt("sequence associative", "0", 'R=="{{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={y1:=*;#y2:=*;{y3:=*;ctrlT{|^@|};++y3:=*;?t < t0+T();}plantT{|^@|};#}");
+        refDistrL('R=="{{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={y1:=*;#y2:=*;{y3:=*;ctrlT{|^@|};++y3:=*;?t < t0+T();}#plantT{|^@|};}");
+        useAt("sequence associative", "0", 'R=="{{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<=#y1:=*;{y2:=*;y3:=*;ctrlT{|^@|};++y2:=*;y3:=*;?t < t0+T();}plantT{|^@|};#");
+        refDistrL('R=="{{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={#y1:=*;{y2:=*;y3:=*;ctrlT{|^@|};++y2:=*;y3:=*;?t < t0+T();}#plantT{|^@|};}");
+        focus('R=="{{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++#y1:=*;y2:=*;y3:=*;?t < t0+T();#}plantT{|^@|};}");
+        (skipRandom(1.1.0) ; refSeqIdL(1.1))*3;
+        refRefl('R=="{?t < t0+T();}<={?t < t0+T();}"),
+      "{{y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}ctrlU{|^@|};y1:=*;y2:=*;y3:=*;{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}<={y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}":
+        expand("ctrlU");
+        useAt("sequence associative", "0", 1.0.1) ; useAt("nondet commute gen", "1", 1.0.1.0) ; useAt("sequence associative", "1", 1.0.1);
+        useAt("sequence associative", "0", 1.0.1.1) ; useAt("nondet commute gen", "1", 1.0.1.1.0) ; useAt("sequence associative", "1", 1.0.1.1);
+        useAt("sequence associative", "0", 1.0.1.1.1) ; useAt("nondet commute gen", "1", 1.0.1.1.1.0) ; useAt("sequence associative", "1", 1.0.1.1.1);
+        expand("ctrlT") ; expand("plantT") ; expand("fallback");
+        useAt("sequence associative", "1", 1.0) ; useAt("sequence associative", "0", 1.0.1) ; useAt("nondet commute gen", "1", 1.0.1.0) ; useAt("sequence associative", "1", 1.0.1) ; useAt("sequence associative", "0", 1.0);
+        refSeq(1) ; andR(1); <(
+          "{y1:=*;y1:=*;}<={y1:=*;}":
+            useLemma("Simple random merge", "prop"),
+          "[y1:=*;y1:=*;]{{y2:=*;y3:=*;{{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}*}y2:=*;y3:=*;{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}<={y2:=*;y3:=*;{{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}*}":
+            unfold;
+            useAt("sequence associative", "1", 1.0) ; useAt("sequence associative", "0", 1.0.1) ; useAt("nondet commute gen", "1", 1.0.1.0) ; useAt("sequence associative", "1", 1.0.1) ; useAt("sequence associative", "0", 1.0);
+            refSeq(1) ; andR(1); <(
+              "{y2:=*;y2:=*;}<={y2:=*;}":
+                useLemma("Simple random merge", "prop"),
+              "[y2:=*;y2:=*;]{{y3:=*;{{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}*}y3:=*;{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}<={y3:=*;{{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}*}":
+                unfold;
+                useAt("sequence associative", "1", 1.0) ; useAt("sequence associative", "0", 1.0.1) ; useAt("nondet commute gen", "1", 1.0.1.0) ; useAt("sequence associative", "1", 1.0.1) ; useAt("sequence associative", "0", 1.0);
+                refSeq(1) ; andR(1); <(
+                  "{y3:=*;y3:=*;}<={y3:=*;}":
+                    useLemma("Simple random merge", "prop"),
+                  "[y3:=*;y3:=*;]{{{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}*{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}<={{{al:=*;?range(al,-Bmax(),Amax());}{af:=*;?range(af,-Bmax(),Amax());{{?xf<=xl;af:=*;?range(af,-Bmax(),-Bmin());++?xl<=xf;af:=*;?range(af,Amin(),Amax());}++?safeT(xf,vf,af,xl,vl);}t0:=t;++?t < t0+T();}{?vl=0&al < 0|vl=V()&al>0;al:=0;++?!(vl=0&al < 0|vl=V()&al>0);}{?vf=0&af < 0|vf=V()&af>0;af:=0;++?!(vf=0&af < 0|vf=V()&af>0);}{xf'=vf,vf'=af,xl'=vl,vl'=al,t'=1&E(vf,vl)&t<=t0+T()}}*}":
+                    unfold;
+                    expandAllDefs();
+                    useAt("unfold right", "1", 1.1) ; hideChoiceL(1.1) ; refRefl(1)
+                )
+            )
+        )
+    )
+);
+expandAllDefs()
+End.
+End.
+
+Lemma "ABZ/Refinement modelNN"
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+Real y1,y2,y3;
+End.
+
+Problem
+  ctxtConst -> {ctrlU;{fullNNctrl;++?(t < t0 + T);};plantT;}* <= y1:=*;y2:=*;y3:=*;{ctrlU;{ctrlT;++?t < t0+T;}plantT;}*;
+End.
+Tactic "ABZ/Refinement modelNN: Proof"
+unfold;
+refTrans("{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*", 1) ; andR(1); <(
+  "{{ctrlU{|^@|};{fullNNctrl{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}":
+    focus(1.0.0.1.0.0) ; expandAllDefs() ; GV(1) ; unfold;
+    useLemma("ABZ/Refinement Controller", "prop"),
+  "{{ctrlU{|^@|};{y1:=*;y2:=*;y3:=*;ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}<={y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*}":
+    useLemma("ABZ/Refinement NN variables", "prop")
+)
+End.
+End.
+
+Theorem "ABZ/Safety Back - NN"
+
+Definitions
+/*Recall definitions used in the proof but not the theorem*/
+HP ctrlT ::= {af:=*;?range(af,-Bmax,Amax);{fallback; ++ ?safeT(xf,vf,af,xl,vl);}t0:=t;};
+End.
+
+ProgramVariables
+Real xf,vf,af;
+Real xl,vl,al;
+Real t,t0;
+Real y1,y2,y3;
+End.
+
+Problem
+    ctxt(vf,vl,af,al) & Hback(xf,vf,xl,vl) & t0 = t-T -> [{ctrlU;{fullNNctrl;++?(t < t0 + T);};plantT;}*]xf + L <= xl
+End.
+Tactic "Safety Back - NN: Proof"
+unfold;
+cutR("[y1:=*;y2:=*;y3:=*;{ctrlU{|^@|};{ctrlT{|^@|};++?t < t0+T();}plantT{|^@|};}*]xf+L()<=xl", 'Rlast) ; <(
+  unfold ; useLemma("ABZ/Safety - Back", "prop"),
+  refBox('Rlast) ; expand("ctxt"); useLemma("ABZ/Refinement modelNN", "prop")
+)
+End.
+End.

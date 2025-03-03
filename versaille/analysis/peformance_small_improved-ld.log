@@ -1,0 +1,11 @@
+------------------------------
+Environment:  0
+Policy:  classic_action
+Results: 
+Start inside invariant:  12538 / 20000
+Crashes:  0 / 20000
+Crashes inside invariant:  0 / 20000
+Average reward (overall):  15.953465625 +- 0.04993727696680482
+Average reward (inside invariant):  15.972533498165577 +- 0.04904129918165246
+Average reward (outside invariant):  15.921426896274458 +- 0.03170725029880947
+Action distribution:  [59333, 89704, 450963]

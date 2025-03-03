@@ -1,0 +1,76 @@
+(
+  (
+    1.0 <= presencefNet & presencefNet <= 1.0 &
+    0.0 <= xfNet & xfNet <= 1.0 &
+    0.0 <= yfNet & yfNet <= 0.0 &
+    -1 <= vfNet & vfNet <= 1 &
+    0.0 <= vyfNet & vyfNet <= 0.0 &
+    1.0 <= presencelNet & presencelNet <= 1.0 &
+    -1 <= xlNet & xlNet <= 1 &
+    0.0 <= ylNet & ylNet <= 0.0 &
+    -1 <= vlNet & vlNet <= 1 &
+    0.0 <= vylNet & vylNet <= 0.0 &
+    0.0 <= presence3Net & presence3Net <= 0.0 &
+    -1 <= x3carNet & x3carNet <= 1 &
+    0.0 <= y3carNet & y3carNet <= 0.0 &
+    -1 <= v3carNet & v3carNet <= 1 &
+    0.0 <= vy3carNet & vy3carNet <= 0.0 &
+    0.0 <= presence4Net & presence4Net <= 0.0 &
+    -1 <= x4carNet & x4carNet <= 1 &
+    0.0 <= y4carNet & y4carNet <= 0.0 &
+    -1 <= v4carNet & v4carNet <= 1 &
+    0.0 <= vy4carNet & vy4carNet <= 0.0 &
+    0.0 <= presence5Net & presence5Net <= 0.0 &
+    -1 <= x5carNet & x5carNet <= 1 &
+    0.0 <= y5carNet & y5carNet <= 0.0 &
+    -1 <= v5carNet & v5carNet <= 1 &
+    0.0 <= vy5carNet & vy5carNet <= 0.0 & 
+    -10000 <= x1post & x1post <= 10000 &
+    -10000 <= x2post & x2post <= 10000 &
+    -10000 <= x3post & x3post <= 10000
+  ) &
+  (
+    (presence3Net = 0 | presence3Net = 1) &
+    (presence4Net = 0 | presence4Net = 1) &
+    (presence5Net = 0 | presence5Net = 1)
+  ) &
+  (
+    (presence3Net=1 -> (xcar3 >= xl + L  &
+    vcar3 >= vl)) &
+    (presence3Net=0 -> x3carNet =0 & v3carNet = 0) &
+    (presence4Net=1 -> (xcar4 >= xcar3 + L  &
+    vcar4 >= vcar3))  &
+    (presence4Net=0 -> x4carNet =0 & v4carNet = 0) &
+    (presence5Net=1 -> (xcar5 >= xcar4 + L  &
+    vcar5 >= vcar4)) &
+    (presence5Net=0 -> x5carNet =0 & v5carNet = 0)
+  )&
+
+(Amax >= Amin  &
+  Amin > 0  &
+  Bmax >= Bmin  &
+  Bmin > 0  &
+  T > 0  &
+  L > 0  &
+  V > 0)&
+  (vf >= 0  &
+  vl >= 0  &
+  vf <= V  &
+  vl <= V)&
+  xf + L <= xl  &
+  xf + vf^2/(2*Bmin) + L  <  xl + vl^2/(2*Bmax)  ) ->  ( x1post >= x2post  &
+  x1post >= x3post  |  x2post > x1post  &
+  x2post >= x3post  &
+(-Bmin <= 0  &
+  0 <= Amax  &
+  vf >= 0  &
+  xf + vf^2/(2*Bmin) + (0/Bmin + 1)*(T*vf) + L  <  xl + vl^2/(2*Bmax))  |  x3post > x1post  &
+  x3post > x2post  &
+(-Bmax <= Amax  &
+  Amax <= -Bmin  &
+  xf + vf^2/(2*Bmin) + L  <  xl + vl^2/(2*Bmax)  |  -Bmin <= Amax  &
+  vf + Amax*T  <  0  &
+  xf + vf^2/(2*(-Amax)) + L  <  xl + vl^2/(2*Bmax)  |  -Bmin <= Amax  &
+  vf + Amax*T >= 0  &
+  xf + vf^2/(2*Bmin) + (Amax/Bmin + 1)*(Amax/2*T^2 + T*vf) + L  <  xl + vl^2/(2*Bmax))
+)
